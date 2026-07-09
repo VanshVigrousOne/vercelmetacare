@@ -1,0 +1,1815 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>MetaCare</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-sans,system-ui);background:var(--color-background-tertiary,#f5f5f3);color:var(--color-text-primary,#1a1a1a);font-size:14px;min-height:100vh}
+.app{display:flex;flex-direction:column;min-height:100vh}
+.topbar{background:var(--color-background-primary,#fff);border-bottom:0.5px solid var(--color-border-tertiary,rgba(0,0,0,0.12));padding:0 1.5rem;display:flex;align-items:center;gap:1rem;height:52px;position:sticky;top:0;z-index:100}
+.logo{font-size:15px;font-weight:500;color:var(--color-text-primary)}
+.logo span{color:#0F6E56}
+.role-tabs{display:flex;gap:4px;margin-left:auto;align-items:center}
+.role-tab{padding:6px 14px;border-radius:var(--border-radius-md,8px);border:0.5px solid var(--color-border-tertiary,rgba(0,0,0,0.12));background:transparent;cursor:pointer;font-size:13px;color:var(--color-text-secondary,#666);transition:all .15s}
+.role-tab.active{background:#0F6E56;color:#fff;border-color:#0F6E56}
+.main{display:flex;flex:1;overflow:hidden}
+.sidebar{width:220px;background:var(--color-background-primary,#fff);border-right:0.5px solid var(--color-border-tertiary,rgba(0,0,0,0.12));padding:1rem;flex-shrink:0;overflow-y:auto}
+.content{flex:1;overflow-y:auto;padding:1.5rem;padding-bottom:5rem}
+.sidebar-label{font-size:11px;font-weight:500;color:var(--color-text-tertiary,#999);text-transform:uppercase;letter-spacing:.05em;margin:0 0 8px 4px}
+.patient-item{padding:8px 10px;border-radius:var(--border-radius-md,8px);cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:2px;transition:background .1s}
+.patient-item:hover{background:var(--color-background-secondary,#f8f8f6)}
+.patient-item.active{background:#E1F5EE}
+.avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500;flex-shrink:0}
+.av-teal{background:#E1F5EE;color:#0F6E56}
+.av-coral{background:#FAECE7;color:#993C1D}
+.av-blue{background:#E6F1FB;color:#185FA5}
+.av-amber{background:#FAEEDA;color:#854F0B}
+.name-line{font-size:13px;font-weight:500}
+.sub-line{font-size:11px;color:var(--color-text-secondary)}
+.card{background:var(--color-background-primary,#fff);border:0.5px solid var(--color-border-tertiary,rgba(0,0,0,0.12));border-radius:var(--border-radius-lg,12px);padding:1rem 1.25rem;margin-bottom:1rem}
+.card-title{font-size:13px;font-weight:500;color:var(--color-text-secondary);margin-bottom:.75rem;display:flex;align-items:center;gap:6px}
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:500}
+.b-green{background:#E1F5EE;color:#085041}
+.b-amber{background:#FAEEDA;color:#633806}
+.b-red{background:#FCEBEB;color:#791F1F}
+.b-blue{background:#E6F1FB;color:#0C447C}
+.b-gray{background:#F1EFE8;color:#444441}
+.b-purple{background:#F0EBF8;color:#5B2D8E}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.grid4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px}
+.metric{background:var(--color-background-secondary,#f8f8f6);border-radius:var(--border-radius-md,8px);padding:.75rem 1rem}
+.metric-label{font-size:11px;color:var(--color-text-secondary);margin-bottom:4px}
+.metric-val{font-size:22px;font-weight:500}
+.metric-sub{font-size:11px;color:var(--color-text-secondary)}
+textarea,input[type=text],input[type=number],input[type=password],input[type=date],select{width:100%;padding:8px 10px;border:0.5px solid var(--color-border-secondary,rgba(0,0,0,0.2));border-radius:var(--border-radius-md,8px);background:var(--color-background-primary,#fff);color:var(--color-text-primary);font-size:13px;font-family:inherit;resize:vertical;outline:none;transition:border-color .15s}
+textarea:focus,input:focus,select:focus{border-color:#0F6E56;box-shadow:0 0 0 2px rgba(15,110,86,.1)}
+.btn{padding:7px 14px;border-radius:var(--border-radius-md,8px);border:0.5px solid var(--color-border-secondary,rgba(0,0,0,0.2));background:transparent;color:var(--color-text-primary);font-size:13px;cursor:pointer;transition:all .15s;font-family:inherit}
+.btn:hover{background:var(--color-background-secondary)}
+.btn:active{transform:scale(0.98)}
+.btn-primary{background:#0F6E56;color:#fff;border-color:#0F6E56}
+.btn-primary:hover{background:#085041;border-color:#085041}
+.btn-danger{background:#FCEBEB;color:#A32D2D;border-color:#F0959580}
+.btn-amber{background:#FAEEDA;color:#633806;border-color:#EF9F2780}
+.btn-blue{background:#E6F1FB;color:#185FA5;border-color:#378ADD80}
+.btn-small{padding:4px 8px;font-size:11px}
+.row{display:flex;gap:8px;align-items:flex-start;margin-top:8px}
+.notif-item{padding:10px 12px;border-radius:var(--border-radius-md,8px);border:0.5px solid var(--color-border-tertiary);margin-bottom:6px;font-size:13px}
+.notif-unread{border-left:3px solid #0F6E56;background:var(--color-background-secondary)}
+.task-card{padding:12px;border-radius:var(--border-radius-md,8px);border:0.5px solid var(--color-border-tertiary);margin-bottom:8px;cursor:pointer;transition:background .1s}
+.task-card:hover{background:var(--color-background-secondary)}
+.task-card.selected{border-color:#0F6E56;background:#E1F5EE20}
+.quote-block{background:var(--color-background-secondary);border-left:3px solid #1D9E75;border-radius:0 8px 8px 0;padding:10px 14px;font-style:italic;font-size:13px;color:var(--color-text-primary);margin-bottom:.75rem}
+.ai-block{background:#E1F5EE40;border:0.5px solid #1D9E7540;border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.6;margin-bottom:.75rem}
+.ai-label{font-size:11px;font-weight:500;color:#0F6E56;margin-bottom:4px;display:flex;align-items:center;gap:4px}
+.chw-block{background:#E6F1FB40;border:0.5px solid #378ADD40;border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.6;margin-bottom:.75rem}
+.chw-label{font-size:11px;font-weight:500;color:#185FA5;margin-bottom:4px}
+.sep{border:none;border-top:0.5px solid var(--color-border-tertiary);margin:1rem 0}
+.h1{font-size:20px;font-weight:500;margin-bottom:.25rem}
+.h2{font-size:16px;font-weight:500;margin-bottom:.75rem}
+.muted{color:var(--color-text-secondary);font-size:13px}
+.tag{display:inline-flex;padding:2px 7px;border-radius:20px;font-size:11px;background:var(--color-background-secondary);color:var(--color-text-secondary);margin:2px}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid #E1F5EE;border-top-color:#0F6E56;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-3px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.chart-bar-wrap{display:flex;align-items:flex-end;gap:6px;height:80px;margin-top:8px}
+.chart-bar-col{display:flex;flex-direction:column;align-items:center;gap:3px;flex:1}
+.chart-bar{border-radius:3px 3px 0 0;width:100%;min-height:4px;transition:height .3s}
+.chart-label{font-size:10px;color:var(--color-text-secondary)}
+.profile-header{display:flex;align-items:center;gap:12px;margin-bottom:1rem}
+.avatar-lg{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:500}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:6px}
+.dot-green{background:#1D9E75}
+.dot-amber{background:#EF9F27}
+.dot-red{background:#E24B4A}
+.setup-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;text-align:center;gap:1rem;padding:2rem}
+.setup-card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:2rem;max-width:420px;width:100%}
+.flex{display:flex;align-items:center;gap:8px}
+.flex-between{display:flex;align-items:center;justify-content:space-between}
+.mt{margin-top:8px}
+.mt2{margin-top:16px}
+.form-label{font-size:12px;font-weight:500;color:var(--color-text-secondary);margin-bottom:4px}
+.unread-dot{width:8px;height:8px;border-radius:50%;background:#E24B4A;flex-shrink:0}
+.alert-banner{background:#FCEBEB;border:0.5px solid #F0959580;border-radius:8px;padding:10px 14px;color:#791F1F;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:.75rem}
+.success-banner{background:#E1F5EE;border:0.5px solid #5DCAA580;border-radius:8px;padding:10px 14px;color:#085041;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:.75rem}
+.info-banner{background:#E6F1FB;border:0.5px solid #378ADD80;border-radius:8px;padding:10px 14px;color:#0C447C;font-size:13px;display:flex;align-items:center;gap:8px;margin-bottom:.75rem}
+/* Tabs */
+.tab-bar{display:flex;gap:4px;margin-bottom:1rem;border-bottom:0.5px solid var(--color-border-tertiary);padding-bottom:8px}
+.tab-btn{padding:6px 14px;border-radius:8px;border:none;background:transparent;cursor:pointer;font-size:13px;color:var(--color-text-secondary);font-family:inherit;transition:all .15s}
+.tab-btn.active{background:#E1F5EE;color:#0F6E56;font-weight:500}
+/* Visit card */
+.visit-card{border:0.5px solid var(--color-border-tertiary);border-radius:8px;padding:12px;margin-bottom:8px;position:relative}
+.visit-card.upcoming{border-left:3px solid #0F6E56}
+.visit-card.completed{border-left:3px solid #378ADD;background:var(--color-background-secondary)}
+.visit-card.escalated{border-left:3px solid #EF9F27}
+/* Diet plan */
+.diet-section{margin-bottom:12px}
+.diet-section-title{font-size:12px;font-weight:600;color:#0F6E56;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
+.diet-item{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--color-border-tertiary,rgba(0,0,0,0.06));font-size:13px}
+.diet-item:last-child{border-bottom:none}
+.diet-dot{width:6px;height:6px;border-radius:50%;background:#1D9E75;flex-shrink:0;margin-top:5px}
+/* Test card */
+.test-item{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:0.5px solid var(--color-border-tertiary)}
+.test-item:last-child{border-bottom:none}
+/* Chatbot */
+#chatbot-bubble{position:fixed;bottom:20px;right:20px;z-index:9999}
+#chatbot-toggle{width:52px;height:52px;border-radius:50%;background:#0F6E56;border:none;color:#fff;font-size:22px;cursor:pointer;box-shadow:0 4px 16px rgba(15,110,86,.35);display:flex;align-items:center;justify-content:center;transition:transform .2s}
+#chatbot-toggle:hover{transform:scale(1.08)}
+#chatbot-panel{display:none;position:fixed;bottom:84px;right:20px;width:340px;height:460px;background:var(--color-background-primary,#fff);border:0.5px solid var(--color-border-tertiary);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.14);z-index:9999;flex-direction:column;overflow:hidden}
+#chatbot-panel.open{display:flex}
+#chatbot-header{padding:12px 16px;background:#0F6E56;color:#fff;font-size:14px;font-weight:500;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+#chatbot-messages{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px}
+.cb-msg{max-width:85%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.5}
+.cb-msg.user{background:#0F6E56;color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+.cb-msg.bot{background:var(--color-background-secondary);color:var(--color-text-primary);align-self:flex-start;border-bottom-left-radius:4px}
+.cb-msg.bot.typing{color:var(--color-text-secondary);font-style:italic}
+#chatbot-input-row{padding:10px 12px;border-top:0.5px solid var(--color-border-tertiary);display:flex;gap:6px;flex-shrink:0}
+#chatbot-input{flex:1;resize:none;height:36px;min-height:36px;max-height:80px;border-radius:8px;font-size:13px;padding:8px 10px}
+#chatbot-send{width:36px;height:36px;border-radius:8px;border:none;background:#0F6E56;color:#fff;font-size:16px;cursor:pointer;flex-shrink:0}
+.cb-quick-btns{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 8px}
+.cb-quick{padding:5px 10px;border:0.5px solid #0F6E56;border-radius:16px;font-size:12px;color:#0F6E56;background:transparent;cursor:pointer;font-family:inherit}
+.cb-quick:hover{background:#E1F5EE}
+/* Escalation flow */
+.escalation-step{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:0.5px solid var(--color-border-tertiary)}
+.escalation-step:last-child{border-bottom:none}
+.esc-num{width:24px;height:24px;border-radius:50%;background:#0F6E56;color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+.notif-badge{position:relative;display:inline-flex}
+.notif-badge-count{position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:50%;background:#E24B4A;color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="topbar">
+    <div class="logo">Meta<span>Care</span></div>
+    <div class="muted" style="font-size:12px">Rural Diabetes Management</div>
+    <div class="role-tabs" id="roleTabs"></div>
+  </div>
+  <div class="main" id="mainArea">
+    <div class="setup-screen" id="setupScreen">
+      <div class="setup-card">
+        <div style="font-size:28px;margin-bottom:.5rem">🏥</div>
+        <div class="h1" style="font-size:22px;margin-bottom:.5rem">MetaCare Login</div>
+        <div class="muted" style="margin-bottom:1.5rem;text-align:left">Sign in with your phone number and password.</div>
+        <div class="form-label" style="text-align:left">Phone number</div>
+        <input type="text" id="loginPhone" placeholder="+91-9876543210" style="margin-bottom:12px">
+        <div class="form-label" style="text-align:left">Password</div>
+        <input type="password" id="loginPassword" placeholder="••••••••" style="margin-bottom:12px">
+        <div class="form-label" style="text-align:left">Role</div>
+        <select id="loginRole" style="margin-bottom:1.5rem">
+          <option value="patient">Patient</option>
+          <option value="chw">CHW (Community Health Worker)</option>
+          <option value="dietician">Dietician</option>
+          <option value="doctor">Doctor</option>
+        </select>
+        <button class="btn btn-primary" id="loginBtn" onclick="loginUser()" style="width:100%">Log in →</button>
+        <div id="loginError" style="color:#A32D2D;font-size:12px;margin-top:8px;min-height:18px;text-align:left"></div>
+        <div style="margin-top:1.25rem;padding:10px 12px;background:var(--color-background-secondary);border-radius:8px;text-align:left">
+          <div style="font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:6px">DEMO CREDENTIALS</div>
+          <div style="font-size:11px;color:var(--color-text-secondary);line-height:1.8">
+            Doctor: +91-9801234567 / doctor123<br>CHW: +91-9712345678 / chw123<br>Dietician: +91-9723456789 / dietician123<br>
+            Patient 1: +91-9876543210 / ramesh123<br>Patient 2: +91-9876543211 / sunita123
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="setup-screen" id="consentScreen" style="display:none"></div>
+  </div>
+</div>
+
+<div id="chatbot-bubble" style="display:none">
+  <div id="chatbot-panel">
+    <div id="chatbot-header">
+      <span>🤖 MetaCare Assistant</span>
+      <button onclick="toggleChatbot()" style="background:none;border:none;color:#fff;cursor:pointer;font-size:18px">✕</button>
+    </div>
+    <div id="chatbot-messages"></div>
+    <div class="cb-quick-btns" id="cbQuickBtns"></div>
+    <div id="chatbot-input-row">
+      <textarea id="chatbot-input" placeholder="Ask about alerts, diet, visits..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMsg()}"></textarea>
+      <button id="chatbot-send" onclick="sendChatMsg()">↑</button>
+    </div>
+  </div>
+  <button id="chatbot-toggle" onclick="toggleChatbot()" title="MetaCare Assistant">💬</button>
+</div>
+
+<script>
+const BACKEND = 'http://localhost:8000';
+
+// ── State & Local Cache ────────────────────────────────────────────────────────
+let currentUser = null;
+let state = {
+  role: 'Patient', patientId: null, selectedTask: null, selectedAlert: null,
+  selectedPatient: null, addingPatient: false, addingCHW: false, loading: {}, flash: null,
+  patientTab: 'overview', providerPatientTab: 'overview',
+  dietPlans: {}, visits: {}, testResults: {}, visitRequests: {}, foodLogs: {}, exerciseLogs: {}
+};
+
+let db = {
+  patients: [], chws: [], dieticians: [], availablePatients: [], logs: [], tasks: [], alerts: [],
+  notifications: [], prescriptions: [], events: []
+};
+
+// ── API Helpers ────────────────────────────────────────────────────────────────
+function getToken()   { return sessionStorage.getItem('mc_token'); }
+function isLoggedIn() { return !!getToken(); }
+function getSession() {
+  return {
+    token:  sessionStorage.getItem('mc_token'),
+    role:   sessionStorage.getItem('mc_role'),
+    userId: parseInt(sessionStorage.getItem('mc_user_id')),
+    name:   sessionStorage.getItem('mc_name'),
+  };
+}
+
+async function api(path, method = 'GET', body = null) {
+  const opts = { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() } };
+  if (body !== null) opts.body = JSON.stringify(body);
+  const res = await fetch(BACKEND + path, opts);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+// ── Authentication ─────────────────────────────────────────────────────────────
+async function loginUser() {
+  const phone = document.getElementById('loginPhone').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const role = document.getElementById('loginRole').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  if (!phone || !password) { errEl.textContent = 'Please enter phone and password.'; return; }
+
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+
+  try {
+    const res = await fetch(BACKEND + '/auth/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, password, role })
+    });
+    if (!res.ok) throw new Error('Login failed. Check credentials.');
+    const data = await res.json();
+    sessionStorage.setItem('mc_token', data.access_token);
+    sessionStorage.setItem('mc_role', data.role);
+    sessionStorage.setItem('mc_user_id', data.user_id);
+    sessionStorage.setItem('mc_name', data.name);
+    state.role = data.role === 'chw' ? 'CHW' : data.role.charAt(0).toUpperCase() + data.role.slice(1);
+
+    document.getElementById('setupScreen').style.display = 'none';
+    document.getElementById('mainArea').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;flex:1"><div><span class="spinner"></span> Loading your data…</div></div>';
+
+    await fetchAllData();
+
+    if (data.role === 'patient' && currentUser && !currentUser.consent_given) {
+      renderConsentScreen();
+      return;
+    }
+
+    renderApp();
+    document.getElementById('chatbot-bubble').style.display = 'block';
+  } catch (e) {
+    errEl.textContent = e.message;
+    document.getElementById('setupScreen').style.display = 'flex';
+    document.getElementById('mainArea').innerHTML = '';
+    btn.disabled = false; btn.textContent = 'Log in →';
+  }
+}
+
+function renderConsentScreen() {
+  document.getElementById('mainArea').innerHTML = `
+    <div class="setup-screen" id="consentScreen">
+      <div class="setup-card" style="max-width:520px">
+        <div style="font-size:28px;margin-bottom:.5rem">📋</div>
+        <div class="h1" style="font-size:22px;margin-bottom:.5rem">Terms &amp; Conditions</div>
+        <div class="muted" style="margin-bottom:1rem;text-align:left">Please read and accept before continuing to MetaCare.</div>
+        <div style="text-align:left;font-size:12.5px;line-height:1.7;max-height:260px;overflow-y:auto;background:var(--color-background-secondary);border-radius:8px;padding:12px 14px;margin-bottom:1rem">
+          By continuing, you consent to MetaCare collecting and sharing your health information
+          (blood sugar readings, medication adherence, symptoms, diet, and visit records) with your
+          assigned Community Health Worker, Dietician (if any), and Doctor for the purpose of your
+          diabetes care. This data may be reviewed by an AI system to help summarize your reports for
+          your care team — it does not replace medical advice. Your information will not be shared with
+          anyone outside your care team without your permission, except where required by law or in a
+          medical emergency. You can ask your CHW or Doctor about your data at any time.
+        </div>
+        <label class="flex" style="align-items:flex-start;gap:8px;margin-bottom:1rem;text-align:left;cursor:pointer">
+          <input type="checkbox" id="consentCheckbox" style="width:auto;margin-top:2px">
+          <span style="font-size:13px">I have read and agree to the Terms &amp; Conditions and consent to MetaCare using my health data as described above.</span>
+        </label>
+        <button class="btn btn-primary" id="consentBtn" onclick="acceptConsent()" style="width:100%">Accept &amp; Continue →</button>
+        <div id="consentError" style="color:#A32D2D;font-size:12px;margin-top:8px;min-height:18px;text-align:left"></div>
+        <button class="btn" style="width:100%;margin-top:8px;font-size:12px" onclick="logout()">Sign out instead</button>
+      </div>
+    </div>`;
+}
+
+async function acceptConsent() {
+  const agree = document.getElementById('consentCheckbox').checked;
+  const errEl = document.getElementById('consentError');
+  errEl.textContent = '';
+  if (!agree) { errEl.textContent = 'Please tick the box to confirm you agree.'; return; }
+
+  const btn = document.getElementById('consentBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const updated = await api(`/patients/${getSession().userId}/consent`, 'POST', { agree: true, version: '1.0' });
+    currentUser = updated;
+    db.patients = db.patients.map(p => p.id === updated.id ? updated : p);
+    document.getElementById('mainArea').innerHTML = '';
+    renderApp();
+    document.getElementById('chatbot-bubble').style.display = 'block';
+  } catch (e) {
+    errEl.textContent = e.message;
+    btn.disabled = false; btn.textContent = 'Accept & Continue →';
+  }
+}
+
+function logout() {
+  sessionStorage.clear();
+  location.reload();
+}
+
+// ── Backend Data Fetching (REAL API) ───────────────────────────────────────────
+async function fetchPatientSpecificData(pId) {
+  try {
+    const [visits, diets, tests, foodLogs, exerciseLogs] = await Promise.all([
+      api(`/patients/${pId}/visits`).catch(() => []),
+      api(`/patients/${pId}/diet-plans?active_only=true`).catch(() => []),
+      api(`/patients/${pId}/lab-tests`).catch(() => []),
+      api(`/patients/${pId}/food-logs`).catch(() => []),
+      api(`/patients/${pId}/exercise-logs`).catch(() => [])
+    ]);
+
+    state.visits[pId] = visits.map(v => ({
+      id: v.id, type: v.visit_type, date: v.visit_date ? v.visit_date.split('T')[0] : '',
+      time: v.visit_date && v.visit_date.includes('T') ? v.visit_date.split('T')[1].slice(0,5) : '10:00',
+      reason: v.reason, status: v.status, conductedBy: v.scheduled_by_name || v.scheduled_by || 'Care Team',
+      outcome: v.visit_notes, labResults: (v.tests_done||[]).join(', ') || null, nextDate: v.next_visit_date, nextTests: null
+    }));
+
+    state.dietPlans[pId] = diets[0] ? {
+      id: diets[0].id,
+      planName: diets[0].plan_name || '',
+      breakfast: diets[0].morning ? [diets[0].morning] : [], lunch: diets[0].lunch ? [diets[0].lunch] : [],
+      dinner: diets[0].dinner ? [diets[0].dinner] : [], snacks: [diets[0].midmorning, diets[0].evening].filter(Boolean),
+      avoid: diets[0].avoid_foods || [], recommended: diets[0].recommended_foods || [], notes: diets[0].special_notes || '',
+      caloriesNeeded: diets[0].calories_needed || null, proteinNeeded: diets[0].protein_needed || null,
+      // Clinical grounding — MetaLife T2DM Nutrition Therapy Guide (bilingual)
+      bmiGroup: diets[0].bmi_group || null, bmiValue: diets[0].bmi_value || null,
+      macros: diets[0].macros || null, mealTimes: diets[0].meal_times || [],
+      strictAvoidance: diets[0].strict_avoidance || [], specialAdvice: diets[0].special_advice || [],
+      waterIntake: diets[0].water_intake || '', exercise: diets[0].exercise || ''
+    } : null;
+
+    state.testResults[pId] = tests.map(t => ({
+      id: t.id, name: t.test_name, value: t.result_value, unit: '',
+      date: t.scheduled_date ? t.scheduled_date.split('T')[0] : '',
+      status: t.status === 'Completed' && t.is_abnormal ? 'High' : t.status,
+      orderedBy: t.ordered_by_name, notes: t.result_notes
+    }));
+
+    state.foodLogs[pId] = foodLogs;
+    state.exerciseLogs[pId] = exerciseLogs;
+
+    // Extract visit requests from alerts
+    state.visitRequests[pId] = db.alerts.filter(a => a.patient_id === pId && (a.source === 'VisitRequest' || a.source === 'PatientVisitRequest') && a.visit_request_status === 'Requested')
+      .map(a => ({ id: a.id, patientId: pId, requestedBy: a.visit_requested_by, requestedByRole: a.source === 'PatientVisitRequest' ? 'Patient' : 'CHW', reason: a.alert_reason, urgency: 'High', status: 'Pending Doctor Response' }));
+  } catch(e) { console.error("Error fetching patient specific data", e); }
+}
+
+async function fetchAllData() {
+  const sess = getSession();
+  const userId = sess.userId;
+  db = { patients:[], chws:[], dieticians:[], availablePatients:[], logs:[], tasks:[], alerts:[], notifications:[], prescriptions:[], events:[] };
+
+  if (sess.role === 'patient') {
+    currentUser = await api(`/patients/${userId}`);
+    db.patients = [currentUser];
+    state.patientId = userId;
+  } else if (sess.role === 'chw') {
+    currentUser = await api('/chws/me');
+    db.patients = await api(`/chws/${userId}/patients`);
+    db.tasks = await api('/tasks?status=Pending');
+    db.alerts = await api('/alerts'); // alerts for patients assigned to this CHW
+    db.dieticians = await api(`/doctors/${currentUser.doctor_id}/dieticians`);
+    state.patientId = db.patients.length > 0 ? db.patients[0].id : null;
+  } else if (sess.role === 'dietician') {
+    // Dietician is a restricted role — no access to tasks, alerts, logs, or prescriptions.
+    // Only diet plans, food logs, and the exercise plan (fetched below per-patient).
+    currentUser = await api('/dieticians/me');
+    db.patients = await api(`/dieticians/${userId}/patients`);
+    db.availablePatients = await api(`/dieticians/${userId}/available-patients`);
+    state.patientId = db.patients.length > 0 ? db.patients[0].id : null;
+    if (!state.selectedPatient) state.selectedPatient = state.patientId;
+  } else if (sess.role === 'doctor') {
+    currentUser = await api('/doctors/me');
+    db.patients = await api(`/doctors/${userId}/patients`);
+    db.alerts = await api('/alerts');
+    db.tasks = await api('/tasks');
+    db.chws = await api(`/doctors/${userId}/chws`);
+    db.dieticians = await api(`/doctors/${userId}/dieticians`);
+    state.patientId = db.patients.length > 0 ? db.patients[0].id : null;
+  }
+
+  if (db.patients.length > 0 && sess.role !== 'dietician') {
+    const logsArr = [], rxArr = [], notifArr = [];
+    for (const p of db.patients) {
+      const [logs, rxs, notifs] = await Promise.all([
+        api(`/patients/${p.id}/logs?limit=14`).catch(()=>[]),
+        api(`/patients/${p.id}/prescriptions`).catch(()=>[]),
+        api(`/patients/${p.id}/notifications`).catch(()=>[])
+      ]);
+      logsArr.push(...logs); rxArr.push(...rxs); notifArr.push(...notifs.map(n => ({...n, read: n.is_read})));
+      await fetchPatientSpecificData(p.id);
+    }
+    db.logs = logsArr; db.prescriptions = rxArr; db.notifications = notifArr;
+  } else if (db.patients.length > 0 && sess.role === 'dietician') {
+    // Dietician: read-only access to daily logs and lab tests (medical context),
+    // plus diet plans / food logs (via fetchPatientSpecificData).
+    // Still never fetches prescriptions or notifications — no write access to those.
+    const logsArr = [];
+    for (const p of db.patients) {
+      const logs = await api(`/patients/${p.id}/logs?limit=14`).catch(()=>[]);
+      logsArr.push(...logs);
+      await fetchPatientSpecificData(p.id);
+    }
+    db.logs = logsArr;
+  }
+}
+
+async function refreshPatientData(pid) {
+  const sess = getSession();
+  if (sess.role === 'dietician') {
+    // Dietician has no access to prescriptions/notifications, and logs are read-only.
+    const logs = await api(`/patients/${pid}/logs?limit=14`).catch(() => []);
+    db.logs = db.logs.filter(l => l.patient_id !== pid).concat(logs);
+    await fetchPatientSpecificData(pid);
+    return;
+  }
+  const [logs, rxs, notifs] = await Promise.all([
+    api(`/patients/${pid}/logs?limit=14`), api(`/patients/${pid}/prescriptions`), api(`/patients/${pid}/notifications`)
+  ]);
+  db.logs = db.logs.filter(l => l.patient_id !== pid).concat(logs);
+  db.prescriptions = db.prescriptions.filter(r => r.patient_id !== pid).concat(rxs);
+  db.notifications = db.notifications.filter(n => n.patient_id !== pid).concat(notifs.map(n => ({ ...n, read: n.is_read })));
+  await fetchPatientSpecificData(pid);
+}
+async function refreshTasks() { db.tasks = await api('/tasks?status=Pending'); }
+async function refreshAlerts() { db.alerts = await api('/alerts'); }
+
+// ── Chatbot (Rule-based, no AI needed) ────────────────────────────────────────
+let chatbotOpen = false;
+
+function toggleChatbot() {
+  chatbotOpen = !chatbotOpen;
+  const panel = document.getElementById('chatbot-panel');
+  panel.classList.toggle('open', chatbotOpen);
+  if (chatbotOpen) {
+    const msgs = document.getElementById('chatbot-messages');
+    if (msgs.children.length === 0) {
+      const role = getSession().role;
+      const name = getSession().name;
+      addBotMessage(`Hi ${name}! 👋 I'm your MetaCare assistant. Tap a quick question below or type your own.`);
+      renderQuickButtons();
+    }
+  }
+}
+
+function addBotMessage(text) {
+  const msgs = document.getElementById('chatbot-messages');
+  const div = document.createElement('div');
+  div.className = 'cb-msg bot';
+  div.innerHTML = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+function addUserMessage(text) {
+  const msgs = document.getElementById('chatbot-messages');
+  const div = document.createElement('div');
+  div.className = 'cb-msg user';
+  div.textContent = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function renderQuickButtons() {
+  const role = getSession().role;
+  const container = document.getElementById('cbQuickBtns');
+  const qs = role === 'patient' ? [
+    "What's my current diet?",
+    "My upcoming visits",
+    "My current medication",
+    "How many unread messages?",
+    "My latest blood sugar"
+  ] : role === 'chw' ? [
+    "How many pending tasks?",
+    "Which patients missed meds?",
+    "Any emergency patients?",
+    "How many patients do I have?",
+    "Patients with bad reports"
+  ] : role === 'dietician' ? [
+    "How many patients do I have?",
+    "Which patients need a diet plan?",
+    "My latest blood sugar readings",
+    "Any recent test results?",
+    "Which patients missed meds?"
+  ] : [
+    "How many active alerts?",
+    "Which patients missed meds?",
+    "Any emergency alerts?",
+    "How many patients total?",
+    "Unresolved visit requests"
+  ];
+  container.innerHTML = qs.map(q =>
+    `<button class="cb-quick" onclick='handleQuickQ(${JSON.stringify(q)})'>${q}</button>`
+  ).join('');
+}
+
+function handleQuickQ(question) {
+  addUserMessage(question);
+  const answer = getBotAnswer(question);
+  setTimeout(() => addBotMessage(answer), 300);
+}
+
+function getBotAnswer(q) {
+  const role = getSession().role;
+  const ql = q.toLowerCase();
+
+  // ── PATIENT answers ─────────────────────────────────────────────────────────
+  if (role === 'patient') {
+    const pid = state.patientId;
+    const diet = state.dietPlans[pid];
+    const logs = getPatientLogs(pid);
+    const rx = getActivePrescription(pid);
+    const notifs = db.notifications.filter(n => n.patient_id === pid && !n.is_read);
+    const visits = (state.visits[pid] || []).filter(v => v.status === 'Scheduled' || v.status === 'Upcoming');
+
+    if (ql.includes('diet') || ql.includes('food') || ql.includes('eat')) {
+      if (!diet || (!diet.breakfast?.length && !diet.lunch?.length)) return "You don't have a diet plan set yet. Your doctor will add one soon.";
+      const bf = (diet.breakfast||[]).join(', ') || '—';
+      const ln = (diet.lunch||[]).join(', ') || '—';
+      const dn = (diet.dinner||[]).join(', ') || '—';
+      const av = (diet.avoid||[]).join(', ') || '—';
+      return `<b>Your Diet Plan:</b><br>🌅 Breakfast: ${bf}<br>☀️ Lunch: ${ln}<br>🌙 Dinner: ${dn}<br>🚫 Avoid: ${av}`;
+    }
+    if (ql.includes('visit') || ql.includes('appointment')) {
+      if (!visits.length) return "You have no upcoming visits scheduled at the moment.";
+      return `<b>Upcoming visits (${visits.length}):</b><br>` + visits.map(v => `📅 ${fmtDate(v.date)} — ${v.type} (${v.conductedBy})`).join('<br>');
+    }
+    if (ql.includes('medication') || ql.includes('medicine') || ql.includes('dawai') || ql.includes('prescription')) {
+      if (!rx) return "No active prescription found. Please contact your doctor.";
+      return `<b>Current Medication:</b><br>💊 ${rx.medication_name}<br>Dosage: ${rx.dosage}${rx.instructions ? '<br>Instructions: ' + rx.instructions : ''}`;
+    }
+    if (ql.includes('message') || ql.includes('unread') || ql.includes('notification')) {
+      if (!notifs.length) return "You have no unread messages right now. ✅";
+      return `You have <b>${notifs.length} unread message${notifs.length > 1 ? 's' : ''}</b> from your care team. Go to the Messages tab to read them.`;
+    }
+    if (ql.includes('sugar') || ql.includes('blood')) {
+      const last = logs[0];
+      if (!last || !last.blood_sugar) return "No blood sugar reading found yet. Please submit a report.";
+      const status = last.blood_sugar > 250 ? '⚠️ High' : last.blood_sugar > 180 ? '🟡 Elevated' : '✅ Normal range';
+      return `Your latest blood sugar is <b>${last.blood_sugar} mg/dL</b> (${status}), logged ${timeAgo(last.created_at)}.`;
+    }
+  }
+
+  // ── CHW answers ─────────────────────────────────────────────────────────────
+  if (role === 'chw') {
+    const tasks = getPendingTasks();
+    const emergencies = tasks.filter(t => t.ai_classification === 'Emergency');
+    const allLogs = db.logs;
+    const yesterday = new Date(Date.now() - 86400000);
+    const missedMeds = db.patients.filter(p => {
+      const latest = db.logs.filter(l => l.patient_id === p.id).sort((a,b) => new Date(b.created_at)-new Date(a.created_at))[0];
+      return latest && !latest.medication_taken;
+    });
+    const badReports = tasks.filter(t => t.ai_classification === 'Emergency' || t.ai_classification === 'Needs Follow Up');
+
+    if (ql.includes('pending') || ql.includes('task')) {
+      if (!tasks.length) return "✅ No pending tasks right now. All patients are stable.";
+      return `You have <b>${tasks.length} pending task${tasks.length > 1 ? 's' : ''}</b>:<br>` + tasks.slice(0,5).map(t => {
+        const p = getPatient(t.patient_id);
+        return `• ${p ? p.name : 'Unknown'} — <span class="badge ${classColor(t.ai_classification, t.critical_sugar_alert)}">${t.ai_classification}</span>`;
+      }).join('<br>');
+    }
+    if (ql.includes('missed') || ql.includes('medicine') || ql.includes('medication')) {
+      if (!missedMeds.length) return "✅ All patients took their medication in their latest report.";
+      return `<b>${missedMeds.length} patient${missedMeds.length > 1 ? 's' : ''} missed their last medication:</b><br>` + missedMeds.map(p => `• ${p.name}`).join('<br>');
+    }
+    if (ql.includes('emergency')) {
+      if (!emergencies.length) return "✅ No emergency tasks right now.";
+      return `<b>⚠️ ${emergencies.length} emergency task${emergencies.length > 1 ? 's' : ''}:</b><br>` + emergencies.map(t => {
+        const p = getPatient(t.patient_id);
+        return `• ${p ? p.name : 'Unknown'}: ${(t.raw_patient_text || '').slice(0, 60)}...`;
+      }).join('<br>');
+    }
+    if (ql.includes('how many') || ql.includes('patient')) {
+      return `You are managing <b>${db.patients.length} patient${db.patients.length !== 1 ? 's' : ''}</b>: ` + db.patients.map(p => p.name).join(', ') + '.';
+    }
+    if (ql.includes('bad') || ql.includes('report')) {
+      if (!badReports.length) return "✅ No patients with concerning reports right now.";
+      return `<b>${badReports.length} patient${badReports.length > 1 ? 's' : ''} with concerning reports:</b><br>` + badReports.map(t => {
+        const p = getPatient(t.patient_id);
+        return `• ${p ? p.name : 'Unknown'} — ${t.ai_classification}`;
+      }).join('<br>');
+    }
+  }
+
+  // ── DIETICIAN answers ───────────────────────────────────────────────────────
+  if (role === 'dietician') {
+    const noDietPlan = db.patients.filter(p => {
+      const diet = state.dietPlans[p.id];
+      return !diet || (!diet.breakfast?.length && !diet.lunch?.length);
+    });
+    const missedMeds = db.patients.filter(p => {
+      const latest = db.logs.filter(l => l.patient_id === p.id).sort((a,b) => new Date(b.created_at)-new Date(a.created_at))[0];
+      return latest && !latest.medication_taken;
+    });
+
+    if (ql.includes('how many') || (ql.includes('patient') && !ql.includes('diet') && !ql.includes('missed'))) {
+      if (!db.patients.length) return "You don't have any patients assigned yet. Use 'Add a patient' to pick one from your doctor's list.";
+      return `You have <b>${db.patients.length} patient${db.patients.length !== 1 ? 's' : ''}</b> assigned: ` + db.patients.map(p => p.name).join(', ') + '.';
+    }
+    if (ql.includes('diet') || ql.includes('plan')) {
+      if (!noDietPlan.length) return "✅ All your patients have a diet plan set.";
+      return `<b>${noDietPlan.length} patient${noDietPlan.length > 1 ? 's' : ''} without a diet plan yet:</b><br>` + noDietPlan.map(p => `• ${p.name}`).join('<br>');
+    }
+    if (ql.includes('sugar') || ql.includes('blood') || ql.includes('reading')) {
+      if (!db.patients.length) return "No patients assigned yet.";
+      return `<b>Latest blood sugar readings:</b><br>` + db.patients.map(p => {
+        const last = db.logs.filter(l => l.patient_id === p.id).sort((a,b) => new Date(b.created_at)-new Date(a.created_at))[0];
+        return `• ${p.name}: ${last?.blood_sugar ? last.blood_sugar + ' mg/dL' : 'no reading yet'}`;
+      }).join('<br>');
+    }
+    if (ql.includes('test') || ql.includes('result') || ql.includes('lab')) {
+      const recentTests = db.patients.flatMap(p => (state.testResults[p.id]||[]).map(t => ({...t, patientName: p.name})));
+      if (!recentTests.length) return "No test results recorded for your patients yet.";
+      return `<b>Test results:</b><br>` + recentTests.slice(0,8).map(t => `• ${t.patientName} — ${t.name}: ${t.status}${t.value ? ' (' + t.value + ')' : ''}`).join('<br>');
+    }
+    if (ql.includes('missed') || ql.includes('medication') || ql.includes('medicine')) {
+      if (!missedMeds.length) return "✅ All patients took their medication in their latest log.";
+      return `<b>${missedMeds.length} patient${missedMeds.length > 1 ? 's' : ''} missed their last medication:</b><br>` + missedMeds.map(p => `• ${p.name}`).join('<br>');
+    }
+  }
+
+  // ── DOCTOR answers ──────────────────────────────────────────────────────────
+  if (role === 'doctor') {
+    const alerts = getActiveAlerts();
+    const emergencyAlerts = alerts.filter(a => a.alert_reason && (a.alert_reason.includes('Emergency') || a.source === 'System'));
+    const missedMeds = db.patients.filter(p => {
+      const latest = db.logs.filter(l => l.patient_id === p.id).sort((a,b) => new Date(b.created_at)-new Date(a.created_at))[0];
+      return latest && !latest.medication_taken;
+    });
+    const visitReqs = Object.values(state.visitRequests).flat().filter(r => r.status === 'Pending Doctor Response');
+
+    if (ql.includes('alert') || ql.includes('how many active')) {
+      if (!alerts.length) return "✅ No active alerts. All patients are stable.";
+      return `You have <b>${alerts.length} active alert${alerts.length > 1 ? 's' : ''}</b>:<br>` + alerts.slice(0,5).map(a => {
+        const p = getPatient(a.patient_id);
+        return `• ${p ? p.name : 'Unknown'} — ${(a.alert_reason || '').slice(0, 60)}`;
+      }).join('<br>');
+    }
+    if (ql.includes('missed') || ql.includes('medication') || ql.includes('medicine')) {
+      if (!missedMeds.length) return "✅ All patients have taken their medication in their latest report.";
+      return `<b>${missedMeds.length} patient${missedMeds.length > 1 ? 's' : ''} missed last medication:</b><br>` + missedMeds.map(p => `• ${p.name}`).join('<br>');
+    }
+    if (ql.includes('emergency')) {
+      if (!emergencyAlerts.length) return "✅ No emergency alerts right now.";
+      return `<b>🚨 ${emergencyAlerts.length} emergency alert${emergencyAlerts.length > 1 ? 's' : ''}:</b><br>` + emergencyAlerts.map(a => {
+        const p = getPatient(a.patient_id);
+        return `• ${p ? p.name : 'Unknown'}: ${(a.alert_reason || '').slice(0, 70)}`;
+      }).join('<br>');
+    }
+    if (ql.includes('how many') || ql.includes('patient')) {
+      return `You have <b>${db.patients.length} patient${db.patients.length !== 1 ? 's' : ''}</b> under your care, managed by ${db.chws.length} CHW${db.chws.length !== 1 ? 's' : ''}.`;
+    }
+    if (ql.includes('visit') || ql.includes('request')) {
+      if (!visitReqs.length) return "✅ No pending visit requests from CHWs.";
+      return `<b>${visitReqs.length} pending visit request${visitReqs.length > 1 ? 's' : ''}:</b><br>` + visitReqs.map(r => {
+        const p = getPatient(r.patientId);
+        return `• ${p ? p.name : 'Unknown'} — ${r.reason}`;
+      }).join('<br>');
+    }
+  }
+
+  return "I can help with patient stats, alerts, medication, diet, and visits. Try one of the quick questions below!";
+}
+
+function sendChatMsg() {
+  const input = document.getElementById('chatbot-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  handleQuickQ(text);
+}
+
+// ── Actions (Connected to Real Backend) ────────────────────────────────────────
+
+async function submitReport() {
+  const text = document.getElementById('reportText').value.trim();
+  const sugar = parseFloat(document.getElementById('sugarInput').value) || null;
+  const meds = document.getElementById('medsInput').value === 'true';
+  if (!text && !sugar) { state.flash = { type:'err', msg:'Please enter data.' }; renderContent(); return; }
+  state.loading.submit = true; renderContent();
+  try {
+    await api(`/patients/${state.patientId}/logs`, 'POST', { blood_sugar: sugar, medication_taken: meds, raw_text: text || null });
+    await refreshPatientData(state.patientId);
+    state.flash = { type:'ok', msg:'Report submitted! Your care team has been notified.' };
+  } catch (e) { state.flash = { type:'err', msg:'Failed: ' + e.message }; }
+  state.loading.submit = false; renderSidebar(); renderContent();
+}
+
+async function markNotificationsRead() {
+  try { await api(`/patients/${state.patientId}/notifications/read`, 'POST'); await fetchAllData(); renderContent(); } catch(e) {}
+}
+
+async function scheduleVisit(patientId, fromProfile=false) {
+  const dateEl = fromProfile ? document.getElementById('pvVisitDate') : document.getElementById('visitDate');
+  const typeEl = fromProfile ? document.getElementById('pvVisitType') : document.getElementById('visitType');
+  const reasonEl = fromProfile ? document.getElementById('pvVisitReason') : document.getElementById('visitReason');
+  if (!dateEl?.value) { alert('Please select a date.'); return; }
+
+  try {
+    await api('/visits', 'POST', {
+      patient_id: patientId, visit_type: typeEl?.value || 'Mandatory',
+      visit_date: new Date(dateEl.value).toISOString(), reason: reasonEl?.value || ''
+    });
+    await refreshPatientData(patientId);
+    state.providerPatientTab = 'visits';
+    renderSidebar(); renderContent();
+  } catch(e) { alert('Failed to schedule visit: ' + e.message); }
+}
+
+function scheduleVisitFromProfile(patientId) { scheduleVisit(patientId, true); }
+
+async function requestDoctorVisit(patientId) {
+  const reason = document.getElementById('visitReason')?.value?.trim() || 'Follow-up required';
+  try {
+    await api(`/patients/${patientId}/request-visit`, 'POST', { reason: reason, visit_type: 'Impromptu' });
+    await fetchAllData();
+    alert('Visit requested.');
+    renderSidebar(); renderContent();
+  } catch(e) { alert('Request failed: ' + e.message); }
+}
+
+function requestDoctorVisitFromProfile(patientId) {
+  const reason = document.getElementById('pvVisitReason')?.value?.trim() || 'Follow-up required';
+  api(`/patients/${patientId}/request-visit`, 'POST', { reason: reason, visit_type: 'Impromptu' })
+    .then(() => { fetchAllData().then(() => { renderSidebar(); renderContent(); }); });
+}
+
+async function patientRequestVisit(patientId) {
+  const reason = document.getElementById('selfVisitReason')?.value?.trim() || 'Patient requested a visit';
+  state.loading.selfVisit = true; renderContent();
+  try {
+    await api(`/patients/${patientId}/request-visit`, 'POST', { reason: reason, visit_type: 'Impromptu' });
+    await fetchAllData();
+    state.flashVisit = 'Visit requested — your CHW has been notified.';
+  } catch(e) { alert('Request failed: ' + e.message); }
+  state.loading.selfVisit = false;
+  renderSidebar(); renderContent();
+}
+
+async function doctorAcceptCase(patientId, alertId) {
+  const date = document.getElementById('docVisitDate')?.value;
+  const tests = document.getElementById('docVisitTests')?.value?.trim() || '';
+  if (!date) { alert("Select a date"); return; }
+  state.loading['accept_'+alertId] = true; renderContent();
+  try {
+    await api(`/alerts/${alertId}/accept-visit`, 'POST', { visit_date: new Date(date).toISOString(), notes: tests });
+    await fetchAllData();
+    state.selectedAlert = null; state.selectedPatient = patientId; state.providerPatientTab = 'visits';
+  } catch(e) { alert('Failed: ' + e.message); }
+  state.loading['accept_'+alertId] = false;
+  renderSidebar(); renderContent();
+}
+
+function recordVisitOutcome(visitId, patientId) { state.recordingVisit = visitId; renderContent(); }
+
+async function saveVisitOutcome(patientId) {
+  const outcome = document.getElementById('visitOutcomeText')?.value?.trim();
+  const labs = document.getElementById('visitLabResults')?.value?.trim();
+  if (!outcome) { alert('Enter notes'); return; }
+  try {
+    await api(`/visits/${state.recordingVisit}`, 'PUT', { status: 'Completed', visit_notes: outcome, tests_done: labs ? [labs] : [] });
+    await refreshPatientData(patientId);
+    state.recordingVisit = null;
+    renderContent();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+async function saveDietPlan(patientId) {
+  const get = id => document.getElementById(id)?.value?.trim() || '';
+  const splitItems = v => v ? v.split(',').map(s=>s.trim()).filter(Boolean) : [];
+  try {
+    await api('/diet-plans', 'POST', {
+      patient_id: patientId, morning: get('dietBreakfast'), lunch: get('dietLunch'),
+      dinner: get('dietDinner'), midmorning: null, avoid_foods: splitItems(get('dietAvoid')), special_notes: get('dietNotes')
+    });
+    await refreshPatientData(patientId);
+    state['dietSaved_'+patientId] = true;
+    setTimeout(() => { state['dietSaved_'+patientId] = false; renderContent(); }, 3000);
+    renderContent();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+function saveDietPlanFromProfile(patientId) {
+  const get = id => document.getElementById(id)?.value?.trim() || '';
+  const splitItems = v => v ? v.split(',').map(s=>s.trim()).filter(Boolean) : [];
+  api('/diet-plans', 'POST', {
+    patient_id: patientId, morning: get('dietBF'), lunch: get('dietLN'),
+    dinner: get('dietDN'), midmorning: get('dietSN'), avoid_foods: splitItems(get('dietAV')), special_notes: get('dietNT')
+  }).then(() => {
+    refreshPatientData(patientId).then(() => {
+      state['dietSavedProfile_'+patientId] = true;
+      setTimeout(() => { state['dietSavedProfile_'+patientId] = false; renderContent(); }, 3000);
+      renderContent();
+    });
+  });
+}
+
+async function saveExercisePlan(patientId) {
+  const text = document.getElementById('exercisePlanText')?.value?.trim();
+  if (!text) { alert('Please enter an exercise recommendation.'); return; }
+  try {
+    await api(`/patients/${patientId}/exercise`, 'PUT', { exercise_plan: text });
+    await fetchAllData();
+    state['exerciseSaved_'+patientId] = true;
+    setTimeout(() => { state['exerciseSaved_'+patientId] = false; renderContent(); }, 3000);
+    renderSidebar(); renderContent();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+async function saveNutritionTargets(patientId) {
+  const calories = document.getElementById('nutCalories')?.value;
+  const protein = document.getElementById('nutProtein')?.value;
+  const planId = state.dietPlans[patientId]?.id;
+  try {
+    if (planId) {
+      await api(`/diet-plans/${planId}`, 'PUT', { calories_needed: parseFloat(calories)||null, protein_needed: parseFloat(protein)||null });
+    } else {
+      await api('/diet-plans', 'POST', { patient_id: patientId, calories_needed: parseFloat(calories)||null, protein_needed: parseFloat(protein)||null });
+    }
+    await refreshPatientData(patientId);
+    state['nutSaved_'+patientId] = true;
+    setTimeout(() => { state['nutSaved_'+patientId] = false; renderContent(); }, 3000);
+    renderContent();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+async function logExercise(patientId, completed) {
+  try {
+    await api(`/patients/${patientId}/exercise-logs`, 'POST', { completed });
+    const logs = await api(`/patients/${patientId}/exercise-logs`);
+    state.exerciseLogs[patientId] = logs;
+    renderContent();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+async function addFoodLog(patientId) {
+  const food = document.getElementById('foodName')?.value?.trim();
+  const calories = document.getElementById('foodCalories')?.value;
+  const protein = document.getElementById('foodProtein')?.value;
+  if (!food) { alert('Please enter what you ate.'); return; }
+  try {
+    await api(`/patients/${patientId}/food-logs`, 'POST', { food_name: food, calories: parseFloat(calories)||null, protein: parseFloat(protein)||null });
+    const logs = await api(`/patients/${patientId}/food-logs`);
+    state.foodLogs[patientId] = logs;
+    renderContent();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+async function orderTests(patientId) {
+  const tests = document.getElementById('testOrder')?.value?.trim();
+  const dueDate = document.getElementById('testDueDate')?.value;
+  if (!tests) { alert('Enter tests'); return; }
+  try {
+    await api('/lab-tests', 'POST', { patient_id: patientId, test_name: tests, scheduled_date: new Date(dueDate).toISOString() });
+    await refreshPatientData(patientId);
+    renderContent();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+function orderTestFromProfile(patientId) {
+  const name = document.getElementById('newTestName')?.value?.trim();
+  const date = document.getElementById('newTestDate')?.value;
+  if (!name) { alert('Enter test'); return; }
+  api('/lab-tests', 'POST', { patient_id: patientId, test_name: name, scheduled_date: new Date(date).toISOString() })
+    .then(() => { refreshPatientData(patientId).then(() => { renderContent(); }); });
+}
+
+function enterTestResult(testId, patientId) { state.enteringTestResult = testId; renderContent(); }
+
+async function saveTestResult(patientId) {
+  const value = document.getElementById('testResultValue')?.value?.trim();
+  const status = document.getElementById('testResultStatus')?.value || 'Normal';
+  if (!value) { alert('Enter result'); return; }
+  try {
+    await api(`/lab-tests/${state.enteringTestResult}`, 'PUT', { status: 'Completed', result_value: value, is_abnormal: (status === 'High') });
+    await fetchAllData();
+    state.enteringTestResult = null;
+    renderSidebar(); renderContent();
+  } catch(e) { alert('Failed: ' + e.message); }
+}
+
+async function validateTask(taskId) {
+  const note = document.getElementById('chwNote').value.trim();
+  if (!note) { alert('Please write a note.'); return; }
+  state.loading['validate_'+taskId] = true; renderContent();
+  try {
+    await api(`/tasks/${taskId}/validate`, 'POST', { chw_note: note });
+    await fetchAllData();
+  } catch(e) { alert('Failed: ' + e.message); }
+  state.loading['validate_'+taskId] = false;
+  renderSidebar(); renderContent();
+}
+
+async function sendNotification(patientId) {
+  const msg = document.getElementById('notifMsg').value.trim();
+  if (!msg) return;
+  state.loading['notif_'+patientId] = true; renderContent();
+  try {
+    await api('/notifications', 'POST', { patient_id: patientId, message: msg, sent_by: getSession().role === 'doctor' ? 'Doctor' : 'CHW', sent_by_name: getSession().name });
+    await refreshPatientData(patientId);
+  } catch(e) {}
+  state.loading['notif_'+patientId] = false; renderContent();
+}
+
+async function suggestPrescription(patientId) {
+  const med = document.getElementById('rxMed').value.trim();
+  const dose = document.getElementById('rxDose').value.trim();
+  if (!med || !dose) return;
+  state.loading['rx_'+patientId] = true; renderContent();
+  try {
+    await api(`/patients/${patientId}/suggest-prescription`, 'POST', { medication_name: med, dosage: dose });
+    await fetchAllData();
+  } catch(e) {}
+  state.loading['rx_'+patientId] = false; renderSidebar(); renderContent();
+}
+
+async function resolveTask(taskId) { try { await api(`/tasks/${taskId}/resolve`, 'POST'); await fetchAllData(); state.selectedTask=null; renderSidebar(); renderContent(); } catch(e){} }
+async function escalateTask(taskId) { try { await api(`/tasks/${taskId}/escalate`, 'POST'); await fetchAllData(); state.selectedTask=null; renderSidebar(); renderContent(); } catch(e){} }
+async function resolveAlert(alertId) { try { await api(`/alerts/${alertId}/resolve`, 'POST'); await fetchAllData(); state.selectedAlert=null; renderSidebar(); renderContent(); } catch(e){} }
+
+async function issuePrescription(patientId) {
+  const med = (document.getElementById('docRxMed') || document.getElementById('manRxMed')).value.trim();
+  const dose = (document.getElementById('docRxDose') || document.getElementById('manRxDose')).value.trim();
+  if (!med || !dose) return;
+  state.loading['docRx_'+patientId] = true; renderContent();
+  try {
+    await api('/prescriptions', 'POST', { patient_id: patientId, medication_name: med, dosage: dose });
+    await fetchAllData();
+  } catch(e) {}
+  state.loading['docRx_'+patientId] = false; renderSidebar(); renderContent();
+}
+
+async function deepAnalysis(patientId, alertId) {
+  const q = document.getElementById('deepAiQ').value.trim();
+  if (!q) return;
+  state.loading['deepai_'+alertId] = true; renderContent();
+  try {
+    const r = await api('/ai/deep-analysis', 'POST', { question: q, alert_id: alertId });
+    state['deepAiResult_'+alertId] = r.analysis || JSON.stringify(r);
+  } catch(e) {}
+  state.loading['deepai_'+alertId] = false; renderContent();
+}
+
+async function runTrendCheck(patientId) {
+  state.loading['trend_'+patientId] = true; renderContent();
+  try {
+    const r = await api(`/ai/trend-check/${patientId}`, 'POST');
+    state['trendResult_'+patientId] = r.should_alert ? `🔴 Alert: ${r.alert_reason}\n\n${r.doctor_context}` : `✅ Stable.`;
+    if (r.alert_created) await fetchAllData();
+  } catch(e) {}
+  state.loading['trend_'+patientId] = false; renderContent();
+}
+
+async function saveNewPatient() {
+  const name = document.getElementById('newPatName').value.trim();
+  const age = document.getElementById('newPatAge').value;
+  const phone = document.getElementById('newPatPhone').value.trim();
+  const genderEl = document.querySelector('input[name="newPatGenderR"]:checked');
+  const gender = genderEl ? genderEl.value : null;
+  const village = document.getElementById('newPatVillage')?.value.trim() || null;
+  const condition = document.getElementById('newPatCondition')?.value || 'Type 2 Diabetes';
+  const password = document.getElementById('newPatPassword').value.trim() || 'patient123';
+  const a1c = document.getElementById('newPatA1c').value;
+  const weight = document.getElementById('newPatWeight').value;
+  const height = document.getElementById('newPatHeight')?.value;
+  const errEl = document.getElementById('newPatError');
+
+  const get = id => document.getElementById(id)?.value?.trim() || null;
+  const title = get('newPatTitle');
+  const dobVal = get('newPatDob');
+  const existing_id = get('newPatExistingId');
+  const blood_group = get('newPatBloodGroup');
+  const preferred_language = get('newPatLanguage');
+  const care_of = get('newPatCareOf');
+  const occupation = get('newPatOccupation');
+  const email = get('newPatEmail');
+  const address = get('newPatAddress');
+  const city = get('newPatCity');
+  const area_pin = get('newPatAreaPin');
+  const referred_by_name = get('newPatReferredName');
+  const referred_by_specialization = get('newPatReferredSpec');
+  const channel = get('newPatChannel');
+  const phone2 = get('newPatPhone2');
+  const tag = get('newPatTag');
+
+  if (!name || !phone) { if(errEl) errEl.textContent = 'Name and phone are required.'; return; }
+
+  const chwEl = document.getElementById('newPatCHW');
+  const chw_id = getSession().role === 'chw' ? getSession().userId : (chwEl ? parseInt(chwEl.value) : db.chws[0]?.id);
+  const doctor_id = getSession().role === 'doctor' ? getSession().userId : currentUser?.doctor_id;
+
+  if (!chw_id || !doctor_id) { if(errEl) errEl.textContent = 'Could not determine CHW or Doctor assignment.'; return; }
+
+  try {
+    const newPat = await api('/patients/register', 'POST', {
+      name, phone, age: parseInt(age)||null, password, chw_id, doctor_id,
+      gender: gender||null, village: village||null, condition,
+      hba1c: parseFloat(a1c)||null, weight: parseFloat(weight)||null, height_cm: parseFloat(height)||null,
+      title, dob: dobVal ? new Date(dobVal).toISOString() : null, existing_id, blood_group,
+      preferred_language, care_of, occupation, email, address, city, area_pin,
+      referred_by_name, referred_by_specialization, channel, phone2, tag
+    });
+    await fetchAllData();
+    state.addingPatient = false; state.selectedPatient = newPat.id;
+  } catch(e) {
+    if(errEl) errEl.textContent = 'Failed: ' + e.message;
+    return;
+  }
+  renderSidebar(); renderContent();
+}
+
+async function saveNewCHW() {
+  const name = document.getElementById('newChwName').value.trim();
+  const phone = document.getElementById('newChwPhone').value.trim();
+  const area = document.getElementById('newChwArea')?.value.trim() || null;
+  const password = document.getElementById('newChwPassword').value.trim() || 'chw123';
+  const errEl = document.getElementById('newChwError');
+
+  if (!name || !phone) { if(errEl) errEl.textContent = 'Name and phone are required.'; return; }
+
+  try {
+    await api('/chws/register', 'POST', { name, phone, area: area||null, password, doctor_id: getSession().userId });
+    await fetchAllData();
+    state.addingCHW = false;
+  } catch(e) {
+    if(errEl) errEl.textContent = 'Failed: ' + e.message;
+    return;
+  }
+  renderSidebar(); renderContent();
+}
+
+function showAddPatient() { state.selectedTask=null; state.selectedAlert=null; state.selectedPatient=null; state.addingCHW=false; state.addingDietician=false; state.addingPatient=true; renderContent(); }
+function showAddCHW() { state.selectedTask=null; state.selectedAlert=null; state.selectedPatient=null; state.addingPatient=false; state.addingDietician=false; state.addingCHW=true; renderContent(); }
+function showAddDietician() { state.selectedTask=null; state.selectedAlert=null; state.selectedPatient=null; state.addingPatient=false; state.addingCHW=false; state.addingDietician=true; renderContent(); }
+
+async function saveNewDietician() {
+  const name = document.getElementById('newDietName').value.trim();
+  const phone = document.getElementById('newDietPhone').value.trim();
+  const specialization = document.getElementById('newDietSpecialization')?.value.trim() || null;
+  const password = document.getElementById('newDietPassword').value.trim() || 'diet123';
+  const errEl = document.getElementById('newDietError');
+
+  if (!name || !phone) { if(errEl) errEl.textContent = 'Name and phone are required.'; return; }
+
+  try {
+    await api('/dieticians/register', 'POST', { name, phone, specialization: specialization||null, password, doctor_id: getSession().userId });
+    await fetchAllData();
+    state.addingDietician = false;
+  } catch(e) {
+    if(errEl) errEl.textContent = 'Failed: ' + e.message;
+    return;
+  }
+  renderSidebar(); renderContent();
+}
+
+// ── App shell & Rendering ──────────────────────────────────────────────────────
+function getPatient(id) { return db.patients.find(p => p.id === id); }
+function getPatientLogs(id) { return db.logs.filter(l => l.patient_id === id).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)); }
+function getPendingTasks() { return db.tasks.filter(t => t.status === 'Pending').sort((a,b) => new Date(b.created_at) - new Date(a.created_at)); }
+function getActiveAlerts() { return db.alerts.filter(a => !a.is_resolved).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)); }
+function getNotifications(pid) { return db.notifications.filter(n => n.patient_id === pid).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)); }
+function getActivePrescription(pid) { return db.prescriptions.find(p => p.patient_id === pid && p.active); }
+function classColor(c, criticalSugar) { return c==='Emergency'||criticalSugar?'b-red':c==='Needs Follow Up'?'b-amber':'b-green'; }
+function timeAgo(iso) {
+  if (!iso) return '';
+  const d = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (d < 60) return 'just now';
+  if (d < 3600) return Math.floor(d/60)+'m ago';
+  if (d < 86400) return Math.floor(d/3600)+'h ago';
+  return Math.floor(d/86400)+'d ago';
+}
+function initials(name) { return (name||'?').split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase(); }
+function fmtDate(iso) { return !iso ? '—' : new Date(iso).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' }); }
+
+function renderApp() {
+  document.getElementById('setupScreen') && (document.getElementById('setupScreen').style.display='none');
+  const main = document.getElementById('mainArea');
+  main.innerHTML = `<div class="sidebar" id="sidebar"></div><div class="content" id="content"></div>`;
+  renderTabs(); renderSidebar(); renderContent();
+}
+
+function renderTabs() {
+  const sess = getSession();
+  const roles = sess.role === 'patient' ? ['Patient'] : sess.role === 'chw' ? ['CHW'] : sess.role === 'dietician' ? ['Dietician'] : ['Doctor'];
+  const unreadCount = db.notifications.filter(n => !n.read).length;
+  document.getElementById('roleTabs').innerHTML =
+    roles.map(r => `<button class="role-tab ${state.role===r?'active':''}" onclick="switchRole('${r}')">${r}</button>`).join('') +
+    (sess.role !== 'patient' && unreadCount > 0 ? `<div class="notif-badge"><button class="btn btn-small" style="font-size:11px" onclick="state.role=(getSession().role==='chw'?'CHW':'Doctor');renderTabs();renderSidebar();renderContent();">🔔</button><span class="notif-badge-count">${unreadCount}</span></div>` : '') +
+    `<button class="btn btn-small" style="margin-left:8px;font-size:11px;color:#A32D2D" onclick="logout()">Sign out</button>`;
+}
+
+function switchRole(r) { state.role=r; state.selectedTask=null; state.selectedAlert=null; state.selectedPatient=null; state.addingPatient=false; state.addingCHW=false; state.addingDietician=false; renderTabs(); renderSidebar(); renderContent(); }
+
+function renderSidebar() {
+  const sb = document.getElementById('sidebar');
+  const sess = getSession();
+  const patient = getPatient(state.patientId);
+  const unread = getNotifications(state.patientId).filter(n => !n.read).length;
+
+  if (state.role === 'Patient') {
+    sb.innerHTML = `
+      <div style="margin-bottom:1rem">
+        <div class="sidebar-label">My Profile</div>
+        <div style="padding:8px 10px">
+          <div class="flex" style="gap:10px">
+            <div class="avatar av-teal" style="width:40px;height:40px;font-size:14px">${initials(patient?patient.name:'?')}</div>
+            <div><div class="name-line">${patient?patient.name:sess.name}</div><div class="sub-line">${patient?patient.age:'--'}y · ${patient?patient.condition:'--'}</div></div>
+          </div>
+          ${unread>0?`<div class="mt" style="display:flex;align-items:center;gap:6px"><span class="unread-dot"></span><span style="font-size:12px;color:#A32D2D">${unread} new message${unread>1?'s':''}</span></div>`:''}
+        </div>
+      </div>
+      <div class="sidebar-label">Navigation</div>
+      ${['overview','report','history','messages','diet','visits','tests'].map(tab => {
+        const labels = {overview:'📊 Overview', report:'📝 Submit Report', history:'📈 History', messages:'📬 Messages', diet:'🥗 Diet Plan', visits:'🏥 Visits', tests:'🧪 Test Results'};
+        return `<div class="patient-item ${state.patientTab===tab?'active':''}" onclick="state.patientTab='${tab}';renderContent()"><span style="font-size:13px">${labels[tab]}</span></div>`;
+      }).join('')}`;
+  } else if (state.role === 'CHW') {
+    const tasks = getPendingTasks();
+    sb.innerHTML = `
+      <div style="margin-bottom:1rem">
+        <div class="sidebar-label">CHW Profile</div>
+        <div style="padding:8px 10px"><div class="flex"><div class="avatar av-coral" style="font-size:11px">${initials(sess.name)}</div><div><div class="name-line">${sess.name}</div><div class="sub-line">Community Health Worker</div></div></div></div>
+      </div>
+      <div class="flex-between" style="margin:0 4px 8px 4px"><div class="sidebar-label" style="margin:0">Patients (${db.patients.length})</div><button class="btn btn-small" onclick="showAddPatient()">+ New</button></div>
+      ${db.patients.map(p => {
+        const pt = db.tasks.filter(t=>t.patient_id===p.id&&t.status==='Pending');
+        const em = pt.filter(t=>t.ai_classification==='Emergency'||t.critical_sugar_alert);
+        const vReqs = (state.visitRequests[p.id]||[]).filter(r=>r.status==='Pending Doctor Response');
+        return `<div class="patient-item ${state.selectedPatient===p.id&&!state.selectedTask?'active':''}" onclick="state.selectedTask=null;state.addingPatient=false;state.addingDietician=false;state.selectedPatient=${p.id};state.providerPatientTab='overview';renderContent()">
+          <div class="avatar av-teal" style="font-size:11px">${initials(p.name)}</div>
+          <div style="flex:1;min-width:0"><div class="name-line" style="font-size:12px">${p.name}</div><div class="sub-line">${p.age||'--'}y · ${p.village||''}</div></div>
+          ${em.length?`<span class="badge b-red" style="font-size:10px">!</span>`:pt.length||vReqs.length?`<span class="badge b-amber" style="font-size:10px">${pt.length+vReqs.length}</span>`:''}
+        </div>`;
+      }).join('')}
+      <hr class="sep">
+      <div class="sidebar-label">Pending Tasks (${tasks.length})</div>
+      ${tasks.slice(0,5).map(t => {
+        const p = getPatient(t.patient_id);
+        return `<div class="patient-item ${state.selectedTask===t.id?'active':''}" onclick="state.selectedTask=${t.id};state.selectedPatient=null;renderContent()">
+          <div class="avatar av-amber" style="font-size:11px;width:28px;height:28px">${initials(p?p.name:'?')}</div>
+          <div style="flex:1;min-width:0"><div class="name-line" style="font-size:12px">${p?p.name:'?'}</div><div class="sub-line">${t.task_type}</div></div>
+          <span class="badge ${classColor(t.ai_classification, t.critical_sugar_alert)}" style="font-size:9px">${t.ai_classification==='Emergency'||t.critical_sugar_alert?'🚨':'⚠'}</span>
+        </div>`;
+      }).join('')}`;
+  } else if (state.role === 'Dietician') {
+    sb.innerHTML = `
+      <div style="margin-bottom:1rem">
+        <div class="sidebar-label">Dietician Profile</div>
+        <div style="padding:8px 10px"><div class="flex"><div class="avatar av-amber" style="font-size:11px">${initials(sess.name)}</div><div><div class="name-line">${sess.name}</div><div class="sub-line">Dietician · Diet &amp; Exercise only</div></div></div></div>
+      </div>
+      <div class="sidebar-label" style="margin:0 4px 8px 4px">My Patients (${db.patients.length})</div>
+      ${db.patients.length===0?`<div class="muted" style="font-size:12px;padding:4px">No patients assigned to you yet.</div>`:''}
+      ${db.patients.map(p => `<div class="patient-item ${state.selectedPatient===p.id?'active':''}" onclick="state.selectedPatient=${p.id};renderContent()">
+          <div class="avatar av-teal" style="font-size:11px">${initials(p.name)}</div>
+          <div style="flex:1;min-width:0"><div class="name-line" style="font-size:12px">${p.name}</div><div class="sub-line">${p.age||'--'}y · ${p.village||''}</div></div>
+        </div>`).join('')}`;
+  } else {
+    sb.innerHTML = `
+      <div style="margin-bottom:1rem">
+        <div class="sidebar-label">Doctor Profile</div>
+        <div style="padding:8px 10px"><div class="flex"><div class="avatar av-blue" style="font-size:11px">${initials(sess.name)}</div><div><div class="name-line">${sess.name}</div><div class="sub-line">Diabetologist</div></div></div></div>
+      </div>
+      <div class="flex-between" style="margin:0 4px 8px 4px">
+        <div class="sidebar-label" style="margin:0">Care Team</div>
+        <div style="display:flex;gap:4px"><button class="btn btn-small" onclick="showAddCHW()">+ CHW</button><button class="btn btn-small" onclick="showAddDietician()">+ Diet</button><button class="btn btn-small" onclick="showAddPatient()">+ Pat</button></div>
+      </div>
+      ${db.chws.length===0?`<div class="muted" style="font-size:12px;padding:4px">No CHWs.</div>`:''}
+      ${db.chws.map(c => {
+        const chwPats = db.patients.filter(p=>p.chw_id===c.id);
+        return `<div style="margin-top:8px;margin-bottom:4px;padding:0 4px"><div class="name-line" style="font-size:12px;color:var(--color-text-secondary)">👩‍⚕️ ${c.name}</div></div>
+        ${chwPats.map(p => {
+          const pa = db.alerts.filter(a=>a.patient_id===p.id&&!a.is_resolved);
+          const vReqs = (state.visitRequests[p.id]||[]).filter(r=>r.status==='Pending Doctor Response');
+          return `<div class="patient-item ${state.selectedPatient===p.id&&!state.selectedAlert?'active':''}" style="margin-left:8px" onclick="state.selectedAlert=null;state.addingPatient=false;state.addingCHW=false;state.addingDietician=false;state.selectedPatient=${p.id};state.providerPatientTab='overview';renderContent()">
+            <div class="avatar av-teal" style="font-size:11px">${initials(p.name)}</div>
+            <div style="flex:1;min-width:0"><div class="name-line" style="font-size:12px">${p.name}</div><div class="sub-line">${p.age||'--'}y · ${p.village||''}</div></div>
+            ${pa.length||vReqs.length?`<span class="badge b-red" style="font-size:10px">${pa.length+vReqs.length}</span>`:''}
+          </div>`;
+        }).join('')}`;
+      }).join('')}`;
+  }
+}
+
+function renderContent() {
+  const el = document.getElementById('content');
+  if (state.addingPatient) { renderAddPatientView(el); return; }
+  if (state.addingCHW) { renderAddCHWView(el); return; }
+  if (state.addingDietician) { renderAddDieticianView(el); return; }
+  if (state.role === 'Patient') renderPatientView(el);
+  else if (state.role === 'CHW') renderCHWView(el);
+  else if (state.role === 'Dietician') renderDieticianView(el);
+  else renderDoctorView(el);
+}
+
+// ── Patient Rendering ────────────────────────────────────────────────────────
+function renderPatientView(el) {
+  const patient = getPatient(state.patientId);
+  if (!patient) { el.innerHTML = `<div class="card"><div class="muted">Patient data not available.</div></div>`; return; }
+  const logs = getPatientLogs(state.patientId);
+  const notifs = getNotifications(state.patientId);
+  const rx = getActivePrescription(state.patientId);
+  const unread = notifs.filter(n => !n.read);
+
+  const tabContent = {
+    overview: renderPatientOverviewTab(patient, logs, rx, unread),
+    report: renderPatientReportTab(patient), history: renderPatientHistoryTab(patient, logs),
+    messages: renderPatientMessagesTab(patient, notifs, unread), diet: renderPatientDietTab(patient),
+    visits: renderPatientVisitsTab(patient), tests: renderPatientTestsTab(patient),
+  };
+
+  el.innerHTML = `
+    <div class="profile-header">
+      <div class="avatar av-teal" style="width:48px;height:48px;font-size:17px">${initials(patient.name)}</div>
+      <div><div class="h1">${patient.name}</div><div class="muted">${patient.age} years · ${patient.condition} · ${patient.village||''}</div></div>
+      ${unread.length>0?`<div class="alert-banner" style="margin:0 0 0 auto;padding:6px 12px"><span>📬</span><span>${unread.length} new</span></div>`:''}
+    </div>
+    <div class="tab-bar">
+      ${[['overview','📊 Overview'],['report','📝 Report'],['history','📈 History'],['messages','📬 Messages'],['diet','🥗 Diet'],['visits','🏥 Visits'],['tests','🧪 Tests']].map(([t,l])=>
+        `<button class="tab-btn ${state.patientTab===t?'active':''}" onclick="state.patientTab='${t}';renderContent()">${l}</button>`
+      ).join('')}
+    </div>
+    ${tabContent[state.patientTab] || tabContent.overview}`;
+}
+
+function renderPatientDetailsCard(p) {
+  const rows = [
+    ['Full name', [p.title, p.name].filter(Boolean).join(' ')],
+    ['Date of birth', p.dob ? fmtDate(p.dob) : null],
+    ['Gender', p.gender],
+    ['Phone', p.phone],
+    ['Alternate phone', p.phone2],
+    ['Email', p.email],
+    ['Blood group', p.blood_group],
+    ['Preferred language', p.preferred_language],
+    ['Village', p.village],
+    ['City', p.city],
+    ['Address', p.address],
+    ['Area PIN', p.area_pin],
+    ['C/O', p.care_of],
+    ['Occupation', p.occupation],
+    ['Existing ID', p.existing_id],
+    ['Referred by', p.referred_by_name],
+    ['Referrer specialization', p.referred_by_specialization],
+    ['Channel', p.channel],
+    ['Tag', p.tag],
+  ].filter(([,v]) => v);
+  if (rows.length === 0) return '';
+  return `<div class="card"><div class="card-title">🧾 Patient Details</div><div class="grid2" style="row-gap:8px">
+    ${rows.map(([label,val]) => `<div><div class="form-label" style="margin-bottom:2px">${label}</div><div style="font-size:13px">${val}</div></div>`).join('')}
+  </div></div>`;
+}
+
+function renderPatientOverviewTab(patient, logs, rx, unread) {
+  const lastLog = logs[0];
+  const latestSugar = lastLog?.blood_sugar;
+  const sugarColor = latestSugar > 250 ? '#E24B4A' : latestSugar > 180 ? '#EF9F27' : '#1D9E75';
+  const upcomingVisits = (state.visits[patient.id]||[]).filter(v=>v.status==='Upcoming');
+  const pendingTests = (state.testResults[patient.id]||[]).filter(t=>t.status==='Pending');
+  const diet = state.dietPlans[patient.id];
+
+  return `
+    ${unread.length>0?`<div class="alert-banner"><span>📬</span><span>${unread.length} new message${unread.length>1?'s':''} from your care team</span><button class="btn" style="margin-left:auto;font-size:12px" onclick="markNotificationsRead()">Mark read</button></div>`:''}
+    <div class="grid4" style="margin-bottom:1rem">
+      <div class="metric"><div class="metric-label">Latest Sugar</div><div class="metric-val" style="color:${sugarColor}">${latestSugar||'—'}</div><div class="metric-sub">mg/dL</div></div>
+      <div class="metric"><div class="metric-label">HbA1c</div><div class="metric-val">${patient.hba1c||'—'}</div><div class="metric-sub">%</div></div>
+      <div class="metric"><div class="metric-label">Next Visit</div><div class="metric-val" style="font-size:15px">${upcomingVisits[0]?fmtDate(upcomingVisits[0].date):'None'}</div><div class="metric-sub">${upcomingVisits[0]?upcomingVisits[0].type:''}</div></div>
+      <div class="metric"><div class="metric-label">Pending Tests</div><div class="metric-val">${pendingTests.length}</div><div class="metric-sub">due soon</div></div>
+    </div>
+    ${renderPatientDetailsCard(patient)}
+    <div class="card"><div class="card-title">🏥 Need to see your CHW?</div><div class="muted" style="margin-bottom:8px">Raise a visit request — your CHW will follow up.</div><input type="text" id="selfVisitReason" placeholder="Reason (e.g. feeling unwell, sugar control)" style="margin-bottom:8px"><button class="btn btn-amber" onclick="patientRequestVisit(${patient.id})">${state.loading.selfVisit?'<span class="spinner"></span>Sending...':'⬆ Request a visit'}</button>${state.flashVisit?`<div class="success-banner" style="margin-top:8px">${state.flashVisit}</div>`:''}</div>
+    <div class="card"><div class="card-title">Blood sugar — last 7 days</div>
+      <div class="chart-bar-wrap">
+        ${logs.length===0?'<div class="muted">No readings yet.</div>':logs.slice(0,7).reverse().map(l=>{
+          const h = l.blood_sugar?Math.round((l.blood_sugar/400)*76):4;
+          const col = l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';
+          return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;
+        }).join('')}
+      </div>
+    </div>
+    ${rx?`<div class="card"><div class="card-title">💊 Current Prescription</div><div style="font-size:15px;font-weight:500;margin-bottom:4px">${rx.medication_name}</div><div class="muted">${rx.dosage}</div>${rx.instructions?`<div class="muted" style="margin-top:4px">${rx.instructions}</div>`:''}</div>`:''}
+    ${upcomingVisits.length>0?`<div class="card"><div class="card-title">🏥 Upcoming Visit</div><div class="visit-card upcoming"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${upcomingVisits[0].type}</span><span class="badge b-green">Scheduled</span></div><div class="muted">📅 ${fmtDate(upcomingVisits[0].date)} at ${upcomingVisits[0].time}</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${upcomingVisits[0].conductedBy}</div><div class="muted" style="margin-top:4px">Reason: ${upcomingVisits[0].reason}</div>${upcomingVisits[0].nextTests?`<div style="margin-top:6px"><span class="badge b-blue">Tests required: ${upcomingVisits[0].nextTests}</span></div>`:''}</div></div>`:''}
+    ${diet?`<div class="card"><div class="card-title">🥗 Today's Diet Reminder</div><div style="font-size:13px;color:#085041;background:#E1F5EE;border-radius:8px;padding:10px;line-height:1.7"><b>Breakfast:</b> ${(diet.breakfast||[]).join(' · ')}<br><b>Snacks:</b> ${(diet.snacks||[]).slice(0,1).join(' · ')}<br><b style="color:#A32D2D">Avoid:</b> ${(diet.avoid||[]).slice(0,2).join(', ')}</div><button class="btn btn-small" style="margin-top:8px" onclick="state.patientTab='diet';renderContent()">View full diet plan →</button></div>`:''}`;
+}
+
+function renderPatientReportTab(patient) {
+  return `<div class="card"><div class="card-title">📝 Submit Today's Health Report</div><div class="form-label">How are you feeling? (Hinglish is fine)</div><textarea id="reportText" rows="3" placeholder="e.g. Aaj thoda chakkar aa raha hai, dawai li..." style="margin-bottom:10px"></textarea><div class="grid2" style="margin-bottom:10px"><div><div class="form-label">Blood sugar (mg/dL)</div><input type="number" id="sugarInput" placeholder="e.g. 187"></div><div><div class="form-label">Medication taken today?</div><select id="medsInput"><option value="true">Yes ✓</option><option value="false">No ✗</option></select></div></div><div class="row"><button class="btn btn-primary" onclick="submitReport()">${state.loading.submit?'<span class="spinner"></span>Sending...':'Submit report'}</button>${state.flash?`<div class="${state.flash.type==='ok'?'success-banner':'alert-banner'}" style="flex:1;margin:0">${state.flash.msg}</div>`:''}</div></div><div class="info-banner"><span>ℹ️</span><span>Your report will be reviewed by your CHW. In an emergency, call CHW directly.</span></div>`;
+}
+
+function renderPatientHistoryTab(patient, logs) {
+  return `<div class="card"><div class="card-title">📈 Blood Sugar History (Last 14 Days)</div><div class="chart-bar-wrap" style="height:100px">${logs.slice(0,14).reverse().map(l=>{const h = l.blood_sugar?Math.round((l.blood_sugar/400)*96):4;const col = l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:9px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label" style="font-size:9px">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div></div><div class="card"><div class="card-title">All Reports</div>${logs.length===0?`<div class="muted">No reports yet.</div>`:logs.map(l=>`<div style="padding:10px 0;border-bottom:0.5px solid var(--color-border-tertiary)"><div class="flex-between"><div class="flex" style="gap:8px"><span class="badge ${l.blood_sugar>250?'b-red':l.blood_sugar>180?'b-amber':'b-green'}">${l.blood_sugar||'—'} mg/dL</span><span class="badge ${l.medication_taken?'b-green':'b-gray'}">${l.medication_taken?'Meds ✓':'Meds ✗'}</span></div><span class="muted" style="font-size:11px">${timeAgo(l.created_at)}</span></div>${l.raw_text?`<div style="margin-top:4px;font-size:13px;color:var(--color-text-secondary);font-style:italic">"${l.raw_text}"</div>`:''}</div>`).join('')}</div>`;
+}
+
+function renderPatientMessagesTab(patient, notifs, unread) {
+  return `${unread.length>0?`<div class="alert-banner"><span>📬</span><span>${unread.length} unread message${unread.length>1?'s':''}</span><button class="btn" style="margin-left:auto;font-size:12px" onclick="markNotificationsRead()">Mark all read</button></div>`:''}<div class="card"><div class="card-title">Messages from care team</div>${notifs.length===0?`<div class="muted">No messages yet.</div>`:notifs.map(n=>`<div class="notif-item ${!n.read?'notif-unread':''}"><div class="flex-between" style="margin-bottom:4px"><span style="font-size:12px;font-weight:500;color:${n.sent_by==='Doctor'?'#185FA5':'#0F6E56'}">${n.sent_by==='Doctor'?`👨‍⚕️ ${n.sent_by_name||'Doctor'}`:`👩‍⚕️ ${n.sent_by_name||'CHW'}`}</span><span style="font-size:11px;color:var(--color-text-secondary)">${timeAgo(n.created_at)}</span></div>${n.message}</div>`).join('')}</div>`;
+}
+
+function renderMealTimesTable(mealTimes) {
+  // mealTimes: [{time, label, en, hi, kcal}, ...] — bilingual full-day plan
+  // from the MetaLife T2DM Nutrition Therapy Guide.
+  return `<div class="diet-section"><div class="diet-section-title">🕐 Full Day Meal Plan / पूरे दिन का आहार</div>
+    ${mealTimes.map(m => `<div class="diet-item" style="align-items:flex-start">
+      <div class="diet-dot" style="margin-top:6px"></div>
+      <div style="flex:1">
+        <div style="font-weight:600;font-size:12px;color:#0F6E56">${m.time}${m.label?` · ${m.label}`:''}${m.kcal?` <span class="muted" style="font-weight:400">(${m.kcal})</span>`:''}</div>
+        <div style="font-size:13px;margin-top:2px">${m.en}</div>
+        <div style="font-size:12px;color:var(--color-text-secondary,#666);margin-top:2px">${m.hi}</div>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+function renderPatientDietTab(patient) {
+  const diet = state.dietPlans[patient.id] || {};
+  const foodLogs = state.foodLogs[patient.id] || [];
+  const todayLogs = foodLogs.filter(f => new Date(f.created_at).toDateString() === new Date().toDateString());
+  const totalCal = todayLogs.reduce((s,f)=>s+(f.calories||0),0);
+  const totalProtein = todayLogs.reduce((s,f)=>s+(f.protein||0),0);
+  return `<div class="card"><div class="card-title">🥗 Your Personalised Diet Plan / आपकी आहार योजना</div><div class="info-banner" style="margin-bottom:1rem"><span>ℹ️</span><span>${diet.planName || 'Diet plan set by your Doctor for Type 2 Diabetes management'}${diet.bmiGroup?` · BMI Group ${diet.bmiGroup}${diet.bmiValue?` (BMI ${diet.bmiValue})`:''}`:''}</span></div>
+  ${diet.mealTimes && diet.mealTimes.length ? renderMealTimesTable(diet.mealTimes) : `${[['🌅 Breakfast', diet.breakfast||[]],['☀️ Lunch', diet.lunch||[]],['🌙 Dinner', diet.dinner||[]],['🍎 Snacks', diet.snacks||[]]].map(([title, items]) => `<div class="diet-section"><div class="diet-section-title">${title}</div>${items.map(item=>`<div class="diet-item"><div class="diet-dot"></div><span>${item}</span></div>`).join('')}</div>`).join('')}`}
+  ${diet.avoid&&diet.avoid.length?`<div class="diet-section"><div class="diet-section-title" style="color:#A32D2D">🚫 Foods to Avoid / परहेज़ करें</div>${diet.avoid.map(item=>`<div class="diet-item"><div class="diet-dot" style="background:#E24B4A"></div><span>${item}</span></div>`).join('')}</div>`:''}
+  ${diet.strictAvoidance&&diet.strictAvoidance.length?`<div class="diet-section"><div class="diet-section-title" style="color:#A32D2D">⛔ Strict Avoidance / बिल्कुल न खाएं</div>${diet.strictAvoidance.map(item=>`<div class="diet-item"><div class="diet-dot" style="background:#E24B4A"></div><span>${item.en}${item.hi?` · ${item.hi}`:''}</span></div>`).join('')}</div>`:''}
+  ${diet.specialAdvice&&diet.specialAdvice.length?`<div class="diet-section"><div class="diet-section-title">💡 Special Advice / विशेष सलाह</div>${diet.specialAdvice.map(item=>`<div class="diet-item"><div class="diet-dot"></div><span>${item.en}${item.hi?` · ${item.hi}`:''}</span></div>`).join('')}</div>`:''}
+  ${diet.notes?`<div class="ai-block" style="margin-top:8px"><div class="ai-label">💡 Notes</div>${diet.notes}</div>`:''}</div>
+  ${patient.exercise_plan?`<div class="card"><div class="card-title">🏃 Recommended Exercise</div><div style="font-size:13px;line-height:1.6">${patient.exercise_plan}</div>${patient.exercise_updated_by_name?`<div class="muted" style="margin-top:6px;font-size:11px">Set by ${patient.exercise_updated_by_name}</div>`:''}
+    ${(() => {
+      const exLogs = state.exerciseLogs[patient.id] || [];
+      const todayEx = exLogs.filter(e => new Date(e.created_at).toDateString() === new Date().toDateString());
+      const doneToday = todayEx.length > 0 && todayEx[0].completed;
+      const missedToday = todayEx.length > 0 && !todayEx[0].completed;
+      return `<div style="margin-top:10px">
+        <div class="form-label" style="margin-bottom:6px">Did you do today's exercise?</div>
+        <div class="row" style="gap:8px">
+          <button class="btn ${doneToday?'btn-primary':''}" onclick="logExercise(${patient.id}, true)">✅ Yes, done</button>
+          <button class="btn ${missedToday?'btn-primary':''}" onclick="logExercise(${patient.id}, false)">❌ Not yet</button>
+        </div>
+        ${exLogs.length>0?`<div class="muted" style="margin-top:8px;font-size:11px">Last 7 check-ins: ${exLogs.slice(0,7).map(e=>e.completed?'✅':'❌').join(' ')}</div>`:''}
+      </div>`;
+    })()}
+  </div>`:''}
+  <div class="card"><div class="card-title">🍽️ What I Ate Today</div>
+    ${(diet.caloriesNeeded||diet.proteinNeeded)?`<div class="grid2" style="margin-bottom:10px">${diet.caloriesNeeded?`<div class="metric"><div class="metric-label">Calories</div><div class="metric-val" style="font-size:16px">${totalCal} / ${diet.caloriesNeeded}</div></div>`:''}${diet.proteinNeeded?`<div class="metric"><div class="metric-label">Protein (g)</div><div class="metric-val" style="font-size:16px">${totalProtein} / ${diet.proteinNeeded}</div></div>`:''}</div>`:''}
+    <div class="grid3" style="margin-bottom:8px"><input type="text" id="foodName" placeholder="What did you eat?"><input type="number" id="foodCalories" placeholder="Calories"><input type="number" id="foodProtein" placeholder="Protein (g)"></div>
+    <button class="btn btn-primary btn-small" onclick="addFoodLog(${patient.id})">+ Add</button>
+    <hr class="sep">
+    ${foodLogs.length===0?`<div class="muted">No food logged yet.</div>`:foodLogs.slice(0,10).map(f=>`<div class="flex-between" style="padding:6px 0;border-bottom:0.5px solid var(--color-border-tertiary);font-size:13px"><span>${f.food_name}</span><span class="muted">${f.calories||'—'} kcal · ${f.protein||'—'}g protein · ${timeAgo(f.created_at)}</span></div>`).join('')}
+  </div>`;
+}
+
+function renderPatientVisitsTab(patient) {
+  const visits = (state.visits[patient.id]||[]).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const upcoming = visits.filter(v=>v.status==='Upcoming' || v.status === 'Scheduled');
+  const past = visits.filter(v=>v.status==='Completed');
+  return `<div class="card"><div class="card-title">🏥 Visits</div>${upcoming.length>0?`<div class="form-label" style="margin-bottom:8px;color:#0F6E56">UPCOMING</div>${upcoming.map(v=>`<div class="visit-card upcoming"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-green">Scheduled</span></div><div class="muted">📅 ${fmtDate(v.date)} at ${v.time}</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${v.conductedBy}</div><div class="muted" style="margin-top:4px">Reason: ${v.reason}</div>${v.nextTests?`<div style="margin-top:6px"><span class="badge b-blue">🧪 Tests: ${v.nextTests}</span></div>`:''}</div>`).join('')}`:''}${past.length>0?`<hr class="sep"><div class="form-label" style="margin-bottom:8px">PAST VISITS</div>${past.map(v=>`<div class="visit-card completed"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-blue">Completed</span></div><div class="muted">📅 ${fmtDate(v.date)}</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${v.conductedBy}</div>${v.outcome?`<div class="ai-block" style="margin-top:8px;font-size:12px"><b>Outcome:</b> ${v.outcome}</div>`:''}${v.labResults?`<div style="margin-top:4px"><span class="badge b-gray">🧪 ${v.labResults}</span></div>`:''}</div>`).join('')}`:''}${visits.length===0?`<div class="muted">No visits recorded yet.</div>`:''}</div>`;
+}
+
+function renderPatientTestsTab(patient) {
+  const tests = (state.testResults[patient.id]||[]).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const pending = tests.filter(t=>t.status==='Pending' || t.status === 'Ordered');
+  const done = tests.filter(t=>t.status!=='Pending' && t.status !== 'Ordered');
+  return `<div class="card"><div class="card-title">🧪 Test Results</div>${pending.length>0?`<div class="form-label" style="margin-bottom:8px;color:#185FA5">UPCOMING TESTS</div>${pending.map(t=>`<div class="test-item"><div><div style="font-weight:500;font-size:13px">${t.name}</div><div class="muted">Due: ${fmtDate(t.date)} · Ordered by: ${t.orderedBy}</div>${t.notes?`<div class="muted" style="font-style:italic">${t.notes}</div>`:''}</div><span class="badge b-blue">Pending</span></div>`).join('')}<hr class="sep">`:''}${done.length>0?`<div class="form-label" style="margin-bottom:8px">RESULTS</div>${done.map(t=>`<div class="test-item"><div><div style="font-weight:500;font-size:13px">${t.name}</div><div style="font-size:14px;font-weight:500;margin-top:2px;color:${t.status==='High'||t.status==='Watch'?'#EF9F27':t.status==='Normal'?'#0F6E56':'var(--color-text-primary)'}">${t.value||'—'} ${t.unit}</div><div class="muted">${fmtDate(t.date)} · ${t.orderedBy}</div>${t.notes?`<div class="muted" style="font-style:italic">${t.notes}</div>`:''}</div><span class="badge ${t.status==='High'?'b-amber':t.status==='Watch'?'b-amber':t.status==='Normal'?'b-green':'b-gray'}">${t.status}</span></div>`).join('')}`:''}${tests.length===0?`<div class="muted">No tests ordered yet.</div>`:''}</div>`;
+}
+
+// ── Provider Rendering (CHW + Doctor) ────────────────────────────────────────
+function renderCHWView(el) {
+  const sess = getSession();
+  const tasks = getPendingTasks();
+  const sel = state.selectedTask ? db.tasks.find(t=>t.id===state.selectedTask) : null;
+  el.innerHTML = `
+    <div class="h1" style="margin-bottom:.25rem">CHW Dashboard — ${sess.name}</div><div class="muted" style="margin-bottom:1.25rem">${tasks.length} pending task${tasks.length!==1?'s':''} · ${db.patients.length} patients</div>
+    <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:1rem;align-items:start"><div>
+      ${tasks.length===0?`<div class="card"><div class="muted">No pending tasks. All patients stable.</div></div>`:''}
+      ${tasks.map(t=>{const p = getPatient(t.patient_id); return `<div class="task-card ${state.selectedTask===t.id?'selected':''}" onclick="state.selectedTask=${t.id};state.selectedPatient=null;renderContent()"><div class="flex-between" style="margin-bottom:4px"><span style="font-size:13px;font-weight:500">${p?p.name:'Unknown'}</span><span class="badge ${classColor(t.ai_classification, t.critical_sugar_alert)}">${t.ai_classification}</span></div><div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px">${t.task_type}</div>${t.critical_sugar_alert?`<div class="badge b-red" style="margin-bottom:4px">🚨 Critical Sugar Reading</div>`:''}${t.raw_patient_text?`<div style="font-size:12px;font-style:italic;color:var(--color-text-secondary)">"${t.raw_patient_text.slice(0,60)}..."</div>`:''}<div style="margin-top:4px;font-size:11px;color:var(--color-text-secondary)">${timeAgo(t.created_at)}</div></div>`;}).join('')}
+      ${db.patients.map(p => { const vReqs = (state.visitRequests[p.id]||[]).filter(r=>r.status==='Pending Doctor Response'); if (!vReqs.length) return ''; return vReqs.map(r=>`<div class="task-card" style="border-left:3px solid #EF9F27" onclick="state.selectedPatient=${p.id};state.selectedTask=null;state.providerPatientTab='visits';renderContent()"><div class="flex-between" style="margin-bottom:4px"><span style="font-size:13px;font-weight:500">${p.name}</span><span class="badge b-amber">${r.requestedByRole==='Patient'?'Patient requested visit':'Visit Request'}</span></div><div style="font-size:12px;color:var(--color-text-secondary)">${r.reason}</div><div style="font-size:11px;color:#EF9F27;margin-top:4px">Urgency: ${r.urgency}</div></div>`).join(''); }).join('')}
+    </div><div id="taskDetail">${sel ? renderTaskDetail(sel) : state.selectedPatient ? renderProviderPatientView(state.selectedPatient) : `<div class="card"><div class="muted" style="text-align:center;padding:2rem">← Select a task or patient to review</div></div>`}</div></div>`;
+}
+
+function renderDieticianView(el) {
+  const sess = getSession();
+  const assignedIds = new Set(db.patients.map(p => p.id));
+  const available = (db.availablePatients||[]).filter(p => !assignedIds.has(p.id));
+  el.innerHTML = `
+    <div class="h1" style="margin-bottom:.25rem">Dietician Dashboard — ${sess.name}</div>
+    <div class="muted" style="margin-bottom:1.25rem">${db.patients.length} patient${db.patients.length!==1?'s':''} · you can view and update diet plans and exercise recommendations only</div>
+    <div class="info-banner" style="margin-bottom:1rem"><span>ℹ️</span><span>As a Dietician, you only have access to diet plans, food logs, and exercise recommendations — not medical logs, alerts, prescriptions, or visits.</span></div>
+    ${renderDieticianAddPatientCard(available)}
+    ${state.selectedPatient ? renderDieticianPatientView(state.selectedPatient) : `<div class="card"><div class="muted" style="text-align:center;padding:2rem">← Select a patient from the sidebar</div></div>`}`;
+}
+
+function renderDieticianAddPatientCard(available) {
+  if (!available.length) return '';
+  return `<div class="card">
+    <div class="card-title">➕ Add a patient</div>
+    <div class="muted" style="margin-bottom:8px">Pick from your doctor's existing patients — no need to enter details.</div>
+    <div class="flex" style="gap:8px">
+      <select id="dieticianAddPatientSelect" style="flex:1">
+        <option value="">Select a patient…</option>
+        ${available.map(p=>`<option value="${p.id}">${p.name} — ${p.age||'--'}y, ${p.condition||''}</option>`).join('')}
+      </select>
+      <button class="btn btn-primary" onclick="addPatientAsDietician()">${state.loading['addDieticianPatient']?'<span class="spinner"></span>Adding...':'Add'}</button>
+    </div>
+  </div>`;
+}
+
+async function addPatientAsDietician() {
+  const sel = document.getElementById('dieticianAddPatientSelect');
+  const patientId = sel.value;
+  if (!patientId) return;
+  const sess = getSession();
+  state.loading['addDieticianPatient'] = true; renderContent();
+  try {
+    await api(`/patients/${patientId}/dietician`, 'PUT', { dietician_id: parseInt(sess.userId) });
+    await fetchAllData();
+    state.selectedPatient = parseInt(patientId);
+  } catch (e) {
+    alert('Could not add patient: ' + e.message);
+  } finally {
+    state.loading['addDieticianPatient'] = false;
+    renderSidebar(); renderContent();
+  }
+}
+
+function renderDieticianPatientView(pid) {
+  const p = getPatient(pid); if (!p) return `<div class="card"><div class="muted">Patient not found.</div></div>`;
+  const sess = getSession();
+  const logs = getPatientLogs(pid);
+  const tabs = [['overview','Overview'], ['history','History'], ['tests','Tests'], ['diet','Diet']];
+  if (!['overview','history','tests','diet'].includes(state.providerPatientTab)) state.providerPatientTab = 'overview';
+  return `<div class="card">
+    <div class="profile-header" style="margin-bottom:.75rem"><div class="avatar av-teal" style="width:54px;height:54px;font-size:18px">${initials(p.name)}</div><div><div class="h1">${p.name}</div><div class="muted">${p.age||'--'}y · ${p.condition} · ${p.village||''}</div></div></div>
+    <div class="tab-bar">${tabs.map(([t,l])=>`<button class="tab-btn ${state.providerPatientTab===t?'active':''}" onclick="state.providerPatientTab='${t}';renderContent()">${l}</button>`).join('')}</div>
+    ${state.providerPatientTab==='overview'?renderProviderOverviewTab(p,logs,null,[],[]):''}
+    ${state.providerPatientTab==='history'?renderProviderHistoryTab(p,logs):''}
+    ${state.providerPatientTab==='tests'?renderProviderTestsTab(p,sess):''}
+    ${state.providerPatientTab==='diet'?renderProviderDietTab(p,sess):''}
+  </div>`;
+}
+
+
+
+function renderDoctorView(el) {
+  const sess = getSession();
+  const alerts = getActiveAlerts();
+  const sel = state.selectedAlert ? db.alerts.find(a=>a.id===state.selectedAlert) : null;
+  const pendingVisitReqs = Object.values(state.visitRequests).flat().filter(r=>r.status==='Pending Doctor Response');
+  el.innerHTML = `
+    <div class="h1" style="margin-bottom:.25rem">Doctor Dashboard — ${sess.name}</div><div class="muted" style="margin-bottom:1.25rem">${alerts.length} active alert${alerts.length!==1?'s':''} requiring review</div>
+    <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:1rem;align-items:start"><div>
+      ${alerts.length===0&&pendingVisitReqs.length===0?`<div class="card"><div class="muted">No active alerts. All patients stable.</div></div>`:''}
+      ${pendingVisitReqs.map(r=>{const p = getPatient(r.patientId);return `<div class="task-card" style="border-left:3px solid #0F6E56" onclick="state.selectedPatient=${r.patientId};state.selectedAlert=null;state.providerPatientTab='visits';renderContent()"><div class="flex-between" style="margin-bottom:4px"><span style="font-size:13px;font-weight:500">${p?p.name:'Unknown'}</span><span class="badge b-green">Visit Request</span></div><div style="font-size:12px;color:var(--color-text-secondary)">Requested by ${r.requestedByRole||'CHW'} ${r.requestedBy?'('+r.requestedBy+')':''}: ${r.reason}</div><div style="font-size:11px;color:#EF9F27;margin-top:4px">Urgency: ${r.urgency}</div></div>`;}).join('')}
+      ${alerts.map(a=>{const p = getPatient(a.patient_id);return `<div class="task-card ${state.selectedAlert===a.id?'selected':''}" onclick="state.selectedAlert=${a.id};state.selectedPatient=null;renderContent()"><div class="flex-between" style="margin-bottom:4px"><span style="font-size:13px;font-weight:500">${p?p.name:'Unknown'}</span><span class="badge ${a.source==='System'||a.alert_reason.includes('Emergency')?'b-red':a.source==='CHW'?'b-amber':'b-blue'}">${a.source}</span></div><div style="font-size:12px;color:var(--color-text-secondary)">${a.alert_reason}</div><div style="font-size:11px;color:var(--color-text-secondary);margin-top:4px">${timeAgo(a.created_at)}</div></div>`;}).join('')}
+    </div><div id="alertDetail">${sel ? renderAlertDetail(sel) : state.selectedPatient ? renderProviderPatientView(state.selectedPatient) : `<div class="card"><div class="muted" style="text-align:center;padding:2rem">← Select an alert or patient to review</div></div>`}</div></div>`;
+}
+
+function renderTaskDetail(t) {
+  const p = getPatient(t.patient_id); const logs = getPatientLogs(t.patient_id); const rx = getActivePrescription(t.patient_id);
+  return `
+    <div class="card">
+      <div class="flex-between" style="margin-bottom:.75rem"><div class="flex"><div class="avatar av-teal" style="font-size:12px">${p?initials(p.name):'?'}</div><div style="margin-left:8px"><div style="font-weight:500">${p?p.name:'Unknown'}</div><div class="muted">${p?`${p.age||'--'}y · ${p.condition}`:''}</div></div></div><span class="badge ${classColor(t.ai_classification, t.critical_sugar_alert)}">${t.ai_classification}</span></div>
+      ${t.critical_sugar_alert?`<div class="alert-banner" style="margin-bottom:.75rem"><span>🚨</span><span>Critical blood sugar reading reported (&lt;70 or &gt;250 mg/dL) — please follow up urgently.</span></div>`:''}
+      ${t.raw_patient_text?`<div class="form-label" style="margin-bottom:4px">Patient's exact words</div><div class="quote-block">"${t.raw_patient_text}"</div>`:''}
+      <div class="ai-label"><span>🤖</span> AI summary</div><div class="ai-block">${t.ai_summary||'No AI summary.'}</div>
+      ${t.extracted_symptoms&&t.extracted_symptoms.length?`<div style="margin-bottom:.75rem"><div class="form-label" style="margin-bottom:4px">Extracted symptoms</div>${t.extracted_symptoms.map(s=>`<span class="tag">${s}</span>`).join('')}</div>`:''}
+      ${t.ai_suggested_action?`<div class="ai-block" style="font-size:12px"><b>Suggested action:</b> ${t.ai_suggested_action}</div>`:''}
+      <hr class="sep">
+      ${t.chw_validated?`<div class="chw-label">✓ CHW validated note</div><div class="chw-block">${t.chw_validated_note}</div>`:`<div class="form-label">Your validation note (after calling patient)</div><textarea id="chwNote" rows="3" placeholder="e.g. Called patient. Confirmed trembling…" style="margin-bottom:8px"></textarea><button class="btn btn-primary" onclick="validateTask(${t.id})" style="margin-bottom:.75rem">${state.loading['validate_'+t.id]?'<span class="spinner"></span>Saving...':'✓ Save validation'}</button>`}
+      <hr class="sep">
+      <div class="form-label" style="color:#0F6E56">Schedule / Request Visit</div>
+      <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Visit Date</div><input type="date" id="visitDate" value="${new Date(Date.now()+7*86400000).toISOString().split('T')[0]}"></div><div><div class="form-label">Visit Type</div><select id="visitType"><option>CHW Home Visit</option><option>Clinic Visit</option><option>Emergency Visit</option></select></div></div><input type="text" id="visitReason" placeholder="Reason (e.g. sugar control, medication review)" style="margin-bottom:8px"><div class="flex" style="gap:8px;margin-bottom:.75rem"><button class="btn btn-blue" onclick="scheduleVisit(${t.patient_id},false)" style="flex:1">📅 Schedule CHW Visit</button><button class="btn btn-amber" onclick="requestDoctorVisit(${t.patient_id})" style="flex:1">⬆ Request Doctor Appointment</button></div>
+      <hr class="sep"><div class="form-label">Send message to patient</div><textarea id="notifMsg" rows="2" placeholder="e.g. Ramesh ji, please check sugar…" style="margin-bottom:8px"></textarea><button class="btn" onclick="sendNotification(${t.patient_id})" style="margin-bottom:.75rem">${state.loading['notif_'+t.patient_id]?'<span class="spinner"></span>Sending...':'📲 Send message to patient'}</button>
+      <hr class="sep"><div class="form-label">Suggest prescription to doctor</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Medication</div><input type="text" id="rxMed" placeholder="e.g. Glipizide 5mg"></div><div><div class="form-label">Dosage</div><input type="text" id="rxDose" placeholder="e.g. Once daily"></div></div><button class="btn btn-amber" onclick="suggestPrescription(${t.patient_id})" style="margin-bottom:.75rem">${state.loading['rx_'+t.patient_id]?'<span class="spinner"></span>Sending...':'💊 Suggest prescription to doctor ↗'}</button>
+      <hr class="sep"><div class="flex" style="gap:8px;margin-top:4px"><button class="btn" style="flex:1" onclick="resolveTask(${t.id})">✓ Mark resolved</button><button class="btn btn-danger" style="flex:1" onclick="escalateTask(${t.id})">🚨 Escalate to doctor</button></div>
+    </div>
+    <div class="card" style="margin-top:0"><div class="card-title">Recent vitals — ${p?p.name:''}</div>${logs.slice(0,5).map(l=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px"><span class="badge ${l.blood_sugar>250?'b-red':l.blood_sugar>180?'b-amber':'b-green'}">${l.blood_sugar||'—'}</span><span class="badge ${l.medication_taken?'b-green':'b-gray'}">${l.medication_taken?'Meds ✓':'Meds ✗'}</span><span class="muted">${l.raw_text?`"${l.raw_text.slice(0,40)}..."`:''}</span><span class="muted" style="margin-left:auto">${timeAgo(l.created_at)}</span></div>`).join('')}${rx?`<div style="margin-top:8px;font-size:12px;color:var(--color-text-secondary)">Current Rx: ${rx.medication_name} — ${rx.dosage}</div>`:''}</div>`;
+}
+
+function renderAlertDetail(a) {
+  const p = getPatient(a.patient_id); const logs = getPatientLogs(a.patient_id); const rx = getActivePrescription(a.patient_id); const task = db.tasks.filter(t=>t.patient_id===a.patient_id&&t.raw_patient_text).sort((x,y)=>new Date(y.created_at)-new Date(x.created_at))[0];
+  return `
+    <div class="card">
+      <div class="flex-between" style="margin-bottom:.75rem"><div class="flex"><div class="avatar av-teal" style="font-size:12px">${p?initials(p.name):'?'}</div><div style="margin-left:8px"><div style="font-weight:500">${p?p.name:''}</div><div class="muted">${p?`${p.age||'--'}y · ${p.condition} · ${p.phone||''}`:''}</div></div></div><span class="badge ${a.source==='System'||a.alert_reason.includes('Emergency')?'b-red':'b-amber'}">${a.source}</span></div>
+      <div style="font-size:13px;font-weight:500;margin-bottom:.75rem;color:${a.alert_reason.includes('Emergency')?'#A32D2D':'var(--color-text-primary)'}">⚠ ${a.alert_reason}</div>
+      ${task&&task.raw_patient_text?`<div class="form-label" style="margin-bottom:4px">Patient's own words</div><div class="quote-block">"${task.raw_patient_text}"</div>`:''}${task&&task.chw_validated_note?`<div class="chw-label">CHW validated note</div><div class="chw-block">${task.chw_validated_note}</div>`:''}
+      <div class="ai-label"><span>🤖</span> AI clinical context</div><div class="ai-block">${a.doctor_context||'No AI context.'}</div>
+      <hr class="sep"><div class="card-title">Blood sugar trend</div><div class="chart-bar-wrap">${logs.slice(0,7).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*72):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>
+      <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Accept Case & Schedule Clinic Visit</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Appointment Date</div><input type="date" id="docVisitDate" value="${new Date(Date.now()+3*86400000).toISOString().split('T')[0]}"></div><div><div class="form-label">Time</div><input type="text" id="docVisitTime" placeholder="e.g. 10:00 AM" value="10:00 AM"></div></div><input type="text" id="docVisitTests" placeholder="Tests to order (e.g. HbA1c, Kidney function)" style="margin-bottom:8px"><button class="btn btn-primary" onclick="doctorAcceptCase(${a.patient_id},${a.id})" style="margin-bottom:.75rem;width:100%">${state.loading['accept_'+a.id]?'<span class="spinner"></span>Scheduling...':'✓ Accept case + schedule appointment (notifies patient & CHW)'}</button>
+      <hr class="sep"><div class="form-label">Issue / update prescription</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Medication</div><input type="text" id="docRxMed" placeholder="e.g. Metformin 1000mg" value="${rx?rx.medication_name:''}"></div><div><div class="form-label">Dosage</div><input type="text" id="docRxDose" placeholder="e.g. Twice daily" value="${rx?rx.dosage:''}"></div></div><input type="text" id="docRxInstr" placeholder="Additional instructions..." value="${rx&&rx.instructions?rx.instructions:''}" style="margin-bottom:8px"><button class="btn btn-primary" onclick="issuePrescription(${a.patient_id})" style="margin-bottom:.75rem">${state.loading['docRx_'+a.patient_id]?'<span class="spinner"></span>Issuing...':'💊 Issue prescription → notifies patient + CHW'}</button>
+      <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Set / Update Diet Plan</div><textarea id="dietBreakfast" rows="2" placeholder="Breakfast items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.breakfast||[]).join(', ')}</textarea><textarea id="dietLunch" rows="2" placeholder="Lunch items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.lunch||[]).join(', ')}</textarea><textarea id="dietDinner" rows="2" placeholder="Dinner items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.dinner||[]).join(', ')}</textarea><textarea id="dietAvoid" rows="1" placeholder="Foods to avoid (comma separated)..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.avoid||[]).join(', ')}</textarea><textarea id="dietNotes" rows="1" placeholder="General diet notes..." style="margin-bottom:8px">${state.dietPlans[a.patient_id]?.notes||''}</textarea><button class="btn btn-blue" onclick="saveDietPlan(${a.patient_id})" style="margin-bottom:.75rem">🥗 Save diet plan → notifies patient</button>${state['dietSaved_'+a.patient_id]?`<div class="success-banner" style="margin-bottom:.75rem">✓ Diet plan saved and patient notified!</div>`:''}
+      <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Order Tests</div><input type="text" id="testOrder" placeholder="e.g. HbA1c, Creatinine, Lipid Profile" style="margin-bottom:6px"><input type="date" id="testDueDate" value="${new Date(Date.now()+7*86400000).toISOString().split('T')[0]}" style="margin-bottom:8px"><button class="btn btn-blue" onclick="orderTests(${a.patient_id})" style="margin-bottom:.75rem">🧪 Order tests → notifies patient & CHW</button>
+      <hr class="sep"><div class="form-label">Deep AI analysis</div><textarea id="deepAiQ" rows="2" placeholder="e.g. 'Could this be hypoglycemia given the trend?'" style="margin-bottom:8px"></textarea><button class="btn" onclick="deepAnalysis(${a.patient_id},${a.id})" style="margin-bottom:.75rem">${state.loading['deepai_'+a.id]?'<span class="spinner"></span>Thinking...':'🤖 Get deeper AI analysis ↗'}</button>${state['deepAiResult_'+a.id]?`<div class="ai-block" style="margin-top:4px">${state['deepAiResult_'+a.id]}</div>`:''}
+      <hr class="sep"><button class="btn" style="width:100%" onclick="resolveAlert(${a.id})">✓ Mark alert resolved</button>
+    </div>`;
+}
+
+function renderAddPatientView(el) {
+  const sess = getSession();
+  el.innerHTML = `
+    <div class="card" style="max-width:880px">
+      <div class="flex-between" style="margin-bottom:1rem">
+        <div class="h2" style="margin:0">➕ Add Patient</div>
+        <button class="btn" onclick="state.addingPatient=false;renderContent()">✕ Cancel</button>
+      </div>
+      <div class="grid2" style="gap:24px;align-items:start">
+        <div>
+          <div class="grid2" style="margin-bottom:10px">
+            <div><div class="form-label">Title</div><select id="newPatTitle"><option value="">—</option><option>Mr.</option><option>Mrs.</option><option>Ms.</option><option>Dr.</option><option>Master</option></select></div>
+            <div><div class="form-label">Full Name *</div><input type="text" id="newPatName" placeholder="Name"></div>
+          </div>
+          <div style="margin-bottom:10px"><div class="form-label">Gender *</div>
+            <div style="display:flex;gap:6px">
+              <label class="btn" style="flex:1;text-align:center"><input type="radio" name="newPatGenderR" value="Male" style="margin-right:6px">Male</label>
+              <label class="btn" style="flex:1;text-align:center"><input type="radio" name="newPatGenderR" value="Female" style="margin-right:6px">Female</label>
+              <label class="btn" style="flex:1;text-align:center"><input type="radio" name="newPatGenderR" value="Other" style="margin-right:6px">Other</label>
+            </div>
+          </div>
+          <div class="grid2" style="margin-bottom:10px">
+            <div><div class="form-label">Age</div><input type="number" id="newPatAge" placeholder="Age" min="1" max="120"></div>
+            <div><div class="form-label">DOB</div><input type="date" id="newPatDob"></div>
+          </div>
+          <div style="margin-bottom:10px"><div class="form-label">Mobile *</div><input type="text" id="newPatPhone" placeholder="+91-9876543210"></div>
+          <div style="margin-bottom:10px"><div class="form-label">Existing ID</div><input type="text" id="newPatExistingId" placeholder="Existing ID"></div>
+          <div class="grid2" style="margin-bottom:10px">
+            <div><div class="form-label">Blood Group</div><select id="newPatBloodGroup"><option value="">Blood Group</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
+            <div><div class="form-label">Preferred Language</div><select id="newPatLanguage"><option value="">Select</option><option>Hindi</option><option>English</option><option>Marathi</option><option>Other</option></select></div>
+          </div>
+          <div class="grid2" style="margin-bottom:10px">
+            <div><div class="form-label">C/O</div><input type="text" id="newPatCareOf"></div>
+            <div><div class="form-label">Occupation</div><input type="text" id="newPatOccupation"></div>
+          </div>
+        </div>
+        <div>
+          <div style="margin-bottom:10px"><div class="form-label">E-Mail</div><input type="text" id="newPatEmail" placeholder="email@example.com"></div>
+          <div style="margin-bottom:10px"><div class="form-label">Address</div><textarea id="newPatAddress" rows="2"></textarea></div>
+          <div style="margin-bottom:10px"><div class="form-label">City</div><input type="text" id="newPatCity"></div>
+          <div style="margin-bottom:10px"><div class="form-label">Area / Pin</div><input type="text" id="newPatAreaPin"></div>
+          <div class="grid2" style="margin-bottom:10px">
+            <div><div class="form-label">Referred By (Dr.)</div><input type="text" id="newPatReferredName" placeholder="Name"></div>
+            <div><div class="form-label">Specialization</div><input type="text" id="newPatReferredSpec" placeholder="Specialization"></div>
+          </div>
+          <div style="margin-bottom:10px"><div class="form-label">Channel</div><input type="text" id="newPatChannel"></div>
+          <div class="grid2" style="margin-bottom:10px">
+            <div><div class="form-label">Mobile 2</div><input type="text" id="newPatPhone2"></div>
+            <div><div class="form-label">Tag</div><input type="text" id="newPatTag"></div>
+          </div>
+        </div>
+      </div>
+      <hr class="sep">
+      <div class="grid2" style="margin-bottom:10px">
+        <div><div class="form-label">Village / Area</div><input type="text" id="newPatVillage" placeholder="e.g. Khategaon, Dewas"></div>
+        <div><div class="form-label">Condition</div><select id="newPatCondition"><option>Type 2 Diabetes</option><option>Type 1 Diabetes</option><option>Pre-Diabetes</option><option>Gestational Diabetes</option></select></div>
+      </div>
+      <div class="grid2" style="margin-bottom:10px">
+        <div><div class="form-label">HbA1c (%)</div><input type="number" id="newPatA1c" placeholder="e.g. 8.2" step="0.1"></div>
+        <div><div class="form-label">Weight (kg)</div><input type="number" id="newPatWeight" placeholder="e.g. 72" step="0.1"></div>
+        <div><div class="form-label">Height (cm) — used for BMI-based diet plan</div><input type="number" id="newPatHeight" placeholder="e.g. 165" step="0.1"></div>
+      </div>
+      ${sess.role === 'doctor' && db.chws.length > 0 ? `
+      <div style="margin-bottom:10px"><div class="form-label">Assign to CHW</div>
+        <select id="newPatCHW">${db.chws.map(c=>`<option value="${c.id}">${c.name} (${c.area||'—'})</option>`).join('')}</select>
+      </div>` : ''}
+      <div style="margin-bottom:16px"><div class="form-label">Login Password (for patient app)</div><input type="password" id="newPatPassword" placeholder="Default: patient123"></div>
+      <div id="newPatError" style="color:#A32D2D;font-size:12px;min-height:18px;margin-bottom:8px"></div>
+      <div class="flex" style="gap:8px;justify-content:flex-end">
+        <button class="btn" onclick="state.addingPatient=false;renderContent()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveNewPatient()">Add Patient</button>
+      </div>
+    </div>`;
+}
+
+function renderAddCHWView(el) {
+  el.innerHTML = `
+    <div class="card" style="max-width:520px">
+      <div class="flex-between" style="margin-bottom:1rem">
+        <div class="h2" style="margin:0">➕ Add New CHW</div>
+        <button class="btn" onclick="state.addingCHW=false;renderContent()">✕ Cancel</button>
+      </div>
+      <div class="grid2" style="margin-bottom:10px">
+        <div><div class="form-label">Full Name *</div><input type="text" id="newChwName" placeholder="e.g. Priya Singh"></div>
+        <div><div class="form-label">Phone *</div><input type="text" id="newChwPhone" placeholder="+91-9712345678"></div>
+      </div>
+      <div style="margin-bottom:10px"><div class="form-label">Coverage Area</div><input type="text" id="newChwArea" placeholder="e.g. Dewas Block, Madhya Pradesh"></div>
+      <div style="margin-bottom:16px"><div class="form-label">Login Password</div><input type="password" id="newChwPassword" placeholder="Default: chw123"></div>
+      <div id="newChwError" style="color:#A32D2D;font-size:12px;min-height:18px;margin-bottom:8px"></div>
+      <div class="flex" style="gap:8px">
+        <button class="btn btn-primary" style="flex:1" onclick="saveNewCHW()">Save CHW →</button>
+        <button class="btn" onclick="state.addingCHW=false;renderContent()">Cancel</button>
+      </div>
+    </div>`;
+}
+
+function renderAddDieticianView(el) {
+  el.innerHTML = `
+    <div class="card" style="max-width:520px">
+      <div class="flex-between" style="margin-bottom:1rem">
+        <div class="h2" style="margin:0">➕ Add New Dietician</div>
+        <button class="btn" onclick="state.addingDietician=false;renderContent()">✕ Cancel</button>
+      </div>
+      <div class="grid2" style="margin-bottom:10px">
+        <div><div class="form-label">Full Name *</div><input type="text" id="newDietName" placeholder="e.g. Anjali Rao"></div>
+        <div><div class="form-label">Phone *</div><input type="text" id="newDietPhone" placeholder="+91-9712345678"></div>
+      </div>
+      <div style="margin-bottom:10px"><div class="form-label">Specialization</div><input type="text" id="newDietSpecialization" placeholder="e.g. Diabetic Nutrition"></div>
+      <div style="margin-bottom:16px"><div class="form-label">Login Password</div><input type="password" id="newDietPassword" placeholder="Default: diet123"></div>
+      <div id="newDietError" style="color:#A32D2D;font-size:12px;min-height:18px;margin-bottom:8px"></div>
+      <div class="flex" style="gap:8px">
+        <button class="btn btn-primary" style="flex:1" onclick="saveNewDietician()">Save Dietician →</button>
+        <button class="btn" onclick="state.addingDietician=false;renderContent()">Cancel</button>
+      </div>
+    </div>`;
+}
+
+function renderProviderPatientView(pid) {
+  const p = getPatient(pid); if (!p) return `<div class="card"><div class="muted">Patient not found.</div></div>`;
+  const logs = getPatientLogs(pid); const rx = getActivePrescription(pid); const openTasks = db.tasks.filter(t=>t.patient_id===pid&&t.status==='Pending'); const activeAlerts = db.alerts.filter(a=>a.patient_id===pid&&!a.is_resolved); const sess = getSession();
+  const tabs = [['overview','Overview'], ['visits','Visits'], ['tests','Tests'], ['diet','Diet'], ['history','History'], ...(sess.role==='doctor'?[['manage','Manage']]:[])];
+  return `<div class="card">
+    <div class="profile-header" style="margin-bottom:.75rem"><div class="avatar av-teal" style="width:54px;height:54px;font-size:18px">${initials(p.name)}</div><div><div class="h1">${p.name}</div><div class="muted">${p.age||'--'}y · ${p.condition} · ${p.phone||'—'}</div><div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap"><span class="badge b-gray">HbA1c: ${p.hba1c||'--'}%</span><span class="badge b-gray">Wt: ${p.weight||'--'} kg</span>${p.height_cm?`<span class="badge b-gray">Ht: ${p.height_cm} cm</span><span class="badge b-gray">BMI: ${Math.round((p.weight/((p.height_cm/100)**2))*10)/10}</span>`:''}<span class="badge b-gray">${p.village||''}</span></div></div></div>
+    <div class="tab-bar">${tabs.map(([t,l])=>`<button class="tab-btn ${state.providerPatientTab===t?'active':''}" onclick="state.providerPatientTab='${t}';renderContent()">${l}</button>`).join('')}</div>
+    ${state.providerPatientTab==='overview'?renderProviderOverviewTab(p,logs,rx,openTasks,activeAlerts):''}
+    ${state.providerPatientTab==='visits'?renderProviderVisitsTab(p,sess):''}
+    ${state.providerPatientTab==='tests'?renderProviderTestsTab(p,sess):''}
+    ${state.providerPatientTab==='diet'?renderProviderDietTab(p,sess):''}
+    ${state.providerPatientTab==='history'?renderProviderHistoryTab(p,logs):''}
+    ${state.providerPatientTab==='manage'&&sess.role==='doctor'?renderDoctorManageTab(p,rx):''}
+  </div>`;
+}
+
+function renderProviderOverviewTab(p, logs, rx, openTasks, activeAlerts) {
+  const lastLog = logs[0]; const upcomingVisits = (state.visits[p.id]||[]).filter(v=>v.status==='Upcoming'||v.status==='Scheduled'); const pendingTests = (state.testResults[p.id]||[]).filter(t=>t.status==='Pending'||t.status==='Ordered');
+  return `
+    ${activeAlerts.length>0?`<div class="form-label" style="color:#A32D2D;margin-bottom:8px">ACTIVE ALERTS</div>${activeAlerts.map(a=>`<div style="background:#FCEBEB;border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer" onclick="switchRole('Doctor');state.selectedAlert=${a.id};state.selectedPatient=null;renderContent()"><div style="font-weight:500;font-size:13px;color:#791F1F">${a.alert_reason}</div><div style="font-size:11px;color:#A32D2D;margin-top:4px">${timeAgo(a.created_at)}</div></div>`).join('')}`:''}
+    ${openTasks.length>0?`<div class="form-label" style="margin-bottom:8px">OPEN TASKS</div>${openTasks.map(t=>`<div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer" onclick="state.selectedTask=${t.id};state.selectedPatient=null;renderContent()"><div class="flex-between"><span style="font-weight:500;font-size:13px">${t.task_type}</span><span class="badge ${classColor(t.ai_classification, t.critical_sugar_alert)}">${t.ai_classification}</span></div><div style="font-size:12px;color:var(--color-text-secondary);margin-top:4px">${(t.ai_summary||'').slice(0,80)}...</div></div>`).join('')}`:''}
+    <div class="grid4" style="margin-bottom:12px"><div class="metric"><div class="metric-label">Latest Sugar</div><div class="metric-val" style="color:${lastLog?.blood_sugar>250?'#E24B4A':lastLog?.blood_sugar>180?'#EF9F27':'#1D9E75'}">${lastLog?.blood_sugar||'—'}</div><div class="metric-sub">mg/dL</div></div><div class="metric"><div class="metric-label">HbA1c</div><div class="metric-val">${p.hba1c||'—'}</div><div class="metric-sub">%</div></div><div class="metric"><div class="metric-label">Next Visit</div><div class="metric-val" style="font-size:14px">${upcomingVisits[0]?fmtDate(upcomingVisits[0].date):'None'}</div><div class="metric-sub">${upcomingVisits[0]?.type||''}</div></div><div class="metric"><div class="metric-label">Pending Tests</div><div class="metric-val">${pendingTests.length}</div><div class="metric-sub">due</div></div></div>
+    <div class="card-title">Blood Sugar Trend (7 Days)</div><div class="chart-bar-wrap" style="margin-bottom:1rem">${logs.slice(0,7).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*76):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>
+    ${rx?`<div class="card-title">Current Prescription</div><div style="background:var(--color-background-secondary);padding:10px;border-radius:8px;font-size:13px;margin-bottom:1rem"><div style="font-weight:500">${rx.medication_name}</div><div class="muted">${rx.dosage}</div>${rx.instructions?`<div class="muted" style="font-style:italic">${rx.instructions}</div>`:''}</div>`:''}
+    ${renderDieticianAssignCard(p)}
+    ${renderPatientDetailsCard(p)}`;
+}
+
+function renderDieticianAssignCard(p) {
+  const sess = getSession();
+  if (sess.role !== 'chw' && sess.role !== 'doctor') return '';
+  const current = (db.dieticians||[]).find(d => d.id === p.dietician_id);
+  return `<div class="card"><div class="card-title">🥗 Dietician</div>
+    ${current?`<div style="font-size:13px;margin-bottom:8px">Currently assigned: <b>${current.name}</b>${current.specialization?` · ${current.specialization}`:''}</div>`:`<div class="muted" style="margin-bottom:8px">No dietician assigned yet.</div>`}
+    <div class="flex" style="gap:8px">
+      <select id="dieticianSelect_${p.id}" style="flex:1">
+        <option value="">${(db.dieticians||[]).length?'Select a dietician…':'No dieticians registered'}</option>
+        ${(db.dieticians||[]).map(d=>`<option value="${d.id}" ${d.id===p.dietician_id?'selected':''}>${d.name}${d.specialization?` (${d.specialization})`:''}</option>`).join('')}
+      </select>
+      <button class="btn btn-primary" onclick="assignDieticianFromProfile(${p.id})">${state.loading['assignDietician_'+p.id]?'<span class="spinner"></span>Saving...':'Assign'}</button>
+    </div>
+    ${state['dieticianAssigned_'+p.id]?`<div class="success-banner" style="margin-top:8px">✓ Dietician assigned!</div>`:''}
+  </div>`;
+}
+
+async function assignDieticianFromProfile(patientId) {
+  const sel = document.getElementById('dieticianSelect_' + patientId);
+  const dieticianId = sel.value;
+  if (!dieticianId) return;
+  state.loading['assignDietician_' + patientId] = true; renderContent();
+  try {
+    const updated = await api(`/patients/${patientId}/dietician`, 'PUT', { dietician_id: parseInt(dieticianId) });
+    db.patients = db.patients.map(p => p.id === patientId ? updated : p);
+    state['dieticianAssigned_' + patientId] = true;
+  } catch (e) {
+    alert('Could not assign dietician: ' + e.message);
+  } finally {
+    state.loading['assignDietician_' + patientId] = false;
+    renderSidebar(); renderContent();
+  }
+}
+
+function renderProviderVisitsTab(p, sess) {
+  const visits = (state.visits[p.id]||[]).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const upcoming = visits.filter(v=>v.status==='Upcoming'||v.status==='Scheduled'); const past = visits.filter(v=>v.status==='Completed'); const vReqs = state.visitRequests[p.id]||[];
+  return `
+    ${vReqs.filter(r=>r.status!=='Completed').length>0?`<div class="info-banner" style="margin-bottom:12px"><span>📋</span><span>Visit request pending response</span></div>`:''}
+    <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px">
+      <div class="form-label" style="color:#0F6E56;margin-bottom:8px">${sess.role==='doctor'?'Schedule Clinic Visit':'Schedule / Request Visit'}</div>
+      <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Date</div><input type="date" id="pvVisitDate" value="${new Date(Date.now()+7*86400000).toISOString().split('T')[0]}"></div><div><div class="form-label">Type</div><select id="pvVisitType">${sess.role==='doctor'?'<option>Clinic Visit</option><option>Teleconsult</option>':'<option>CHW Home Visit</option><option>Clinic Visit</option>'}</select></div></div>
+      <input type="text" id="pvVisitReason" placeholder="Reason for visit" style="margin-bottom:8px"><input type="text" id="pvVisitTests" placeholder="Tests to order at visit (optional)" style="margin-bottom:8px">
+      <div class="flex" style="gap:8px"><button class="btn btn-primary" onclick="scheduleVisitFromProfile(${p.id})" style="flex:1">📅 ${sess.role==='doctor'?'Schedule & notify patient+CHW':'Schedule CHW Visit'}</button>${sess.role==='chw'?`<button class="btn btn-amber" onclick="requestDoctorVisitFromProfile(${p.id})" style="flex:1">⬆ Request Doctor Visit</button>`:''}</div>
+    </div>
+    ${upcoming.length>0?`<div class="form-label" style="margin-bottom:8px;color:#0F6E56">UPCOMING</div>${upcoming.map(v=>`<div class="visit-card upcoming" style="margin-bottom:8px"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-green">Scheduled</span></div><div class="muted">📅 ${fmtDate(v.date)} at ${v.time}</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${v.conductedBy}</div><div class="muted">Reason: ${v.reason}</div>${v.nextTests?`<div style="margin-top:4px"><span class="badge b-blue">🧪 ${v.nextTests}</span></div>`:''}<button class="btn btn-small btn-primary" style="margin-top:8px" onclick="recordVisitOutcome('${v.id}',${p.id})">Record outcome</button></div>`).join('')}`:''}
+    ${past.length>0?`<hr class="sep"><div class="form-label" style="margin-bottom:8px">PAST VISITS</div>${past.map(v=>`<div class="visit-card completed" style="margin-bottom:8px"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-blue">Completed · ${fmtDate(v.date)}</span></div><div class="muted">👨‍⚕️ ${v.conductedBy}</div>${v.outcome?`<div class="ai-block" style="margin-top:8px;font-size:12px"><b>Outcome:</b> ${v.outcome}</div>`:''}${v.labResults?`<div style="margin-top:4px"><span class="badge b-gray">🧪 ${v.labResults}</span></div>`:''}${v.nextDate?`<div class="muted" style="margin-top:4px">Next visit: ${fmtDate(v.nextDate)}</div>`:''}</div>`).join('')}`:''}
+    ${state['recordingVisit']?`<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-top:8px"><div class="form-label" style="margin-bottom:8px">Record Visit Outcome</div><textarea id="visitOutcomeText" rows="3" placeholder="What was discussed, findings, next steps..." style="margin-bottom:8px"></textarea><input type="text" id="visitLabResults" placeholder="Lab results if any (e.g. HbA1c: 7.8%)" style="margin-bottom:8px"><div class="flex" style="gap:8px"><button class="btn btn-primary" onclick="saveVisitOutcome(${p.id})">Save outcome → notify patient</button><button class="btn" onclick="state.recordingVisit=null;renderContent()">Cancel</button></div></div>`:''}`;
+}
+
+function renderProviderTestsTab(p, sess) {
+  const tests = (state.testResults[p.id]||[]).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  return `
+    ${sess.role==='doctor'?`<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Order New Test</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Test Name</div><input type="text" id="newTestName" placeholder="e.g. HbA1c"></div><div><div class="form-label">Due Date</div><input type="date" id="newTestDate" value="${new Date(Date.now()+7*86400000).toISOString().split('T')[0]}"></div></div><input type="text" id="newTestNotes" placeholder="Notes for patient/CHW" style="margin-bottom:8px"><button class="btn btn-primary" onclick="orderTestFromProfile(${p.id})">🧪 Order test → notify patient & CHW</button></div>`:`<div class="info-banner" style="margin-bottom:12px"><span>ℹ️</span><span>Tests are ordered by the doctor. You can record results after collection.</span></div>`}
+    ${tests.map(t=>`<div class="test-item"><div><div style="font-weight:500;font-size:13px">${t.name}</div>${t.value!==null?`<div style="font-size:14px;font-weight:500;margin-top:2px;color:${t.status==='High'||t.status==='Watch'?'#EF9F27':t.status==='Normal'?'#0F6E56':'var(--color-text-primary)'}">${t.value} ${t.unit}</div>`:''}<div class="muted">📅 ${fmtDate(t.date)} · ${t.orderedBy}</div>${t.notes?`<div class="muted" style="font-style:italic">${t.notes}</div>`:''}${(t.status==='Pending'||t.status==='Ordered')&&sess.role!=='patient'?`<button class="btn btn-small" style="margin-top:6px" onclick="enterTestResult('${t.id}',${p.id})">Enter result</button>`:''}</div><span class="badge ${t.status==='High'?'b-amber':t.status==='Watch'?'b-amber':t.status==='Normal'?'b-green':t.status==='Pending'||t.status==='Ordered'?'b-blue':'b-gray'}">${t.status}</span></div>`).join('')}
+    ${state['enteringTestResult']?`<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-top:12px"><div class="form-label" style="margin-bottom:8px">Enter Test Result</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Result Value</div><input type="text" id="testResultValue" placeholder="e.g. 7.8"></div><div><div class="form-label">Status</div><select id="testResultStatus"><option>Normal</option><option>High</option><option>Low</option><option>Watch</option></select></div></div><input type="text" id="testResultNotes" placeholder="Notes" style="margin-bottom:8px"><div class="flex" style="gap:8px"><button class="btn btn-primary" onclick="saveTestResult(${p.id})">Save result → notify patient</button><button class="btn" onclick="state.enteringTestResult=null;renderContent()">Cancel</button></div></div>`:''}`;
+}
+
+function renderProviderDietTab(p, sess) {
+  const diet = state.dietPlans[p.id] || {};
+  const bmi = (p.weight && p.height_cm) ? Math.round((p.weight / ((p.height_cm/100)**2)) * 10) / 10 : null;
+  return `
+    ${(sess.role==='doctor'||sess.role==='dietician')?`
+    <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px">
+      <div class="form-label" style="color:#0F6E56;margin-bottom:8px">🥗 Generate from Clinical Guide / नैदानिक मार्गदर्शिका से बनाएं</div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">MetaLife T2DM Nutrition Therapy Guide — bilingual, BMI-based (Asian Indian cutoffs). Weight ${p.weight||'—'} kg, Height ${p.height_cm||'—'} cm${bmi?` → BMI ${bmi}`:' (add height to auto-detect BMI group)'}.</div>
+      <div class="grid2" style="margin-bottom:8px">
+        <div><div class="form-label">BMI Group (optional override)</div>
+          <select id="dietBmiGroupOverride_${p.id}">
+            <option value="">Auto-detect from weight/height</option>
+            <option value="1">1 — Normal (18.5–22.9)</option>
+            <option value="2">2 — Overweight (23.0–24.9)</option>
+            <option value="3">3 — Obese I (25.0–27.4)</option>
+            <option value="4">4 — Obese II+ (≥27.5)</option>
+          </select>
+        </div>
+        <div><div class="form-label">Notes for personalisation</div><input type="text" id="dietGenNotes_${p.id}" placeholder="e.g. on insulin, low readings this week"></div>
+      </div>
+      <button class="btn btn-primary" onclick="generateClinicalDietPlan(${p.id})">${state.loading['dietGen_'+p.id]?'<span class="spinner"></span>Generating...':'🩺 Generate clinical diet plan'}</button>
+      ${state['dietGenerated_'+p.id]?`<div class="success-banner" style="margin-top:8px">✓ Clinical diet plan generated and patient notified!</div>`:''}
+    </div>
+    <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Or edit free-text plan manually</div><div class="form-label">Breakfast</div><textarea id="dietBF" rows="2" style="margin-bottom:6px">${(diet.breakfast||[]).join(', ')}</textarea><div class="form-label">Lunch</div><textarea id="dietLN" rows="2" style="margin-bottom:6px">${(diet.lunch||[]).join(', ')}</textarea><div class="form-label">Dinner</div><textarea id="dietDN" rows="2" style="margin-bottom:6px">${(diet.dinner||[]).join(', ')}</textarea><div class="form-label">Snacks</div><textarea id="dietSN" rows="1" style="margin-bottom:6px">${(diet.snacks||[]).join(', ')}</textarea><div class="form-label">Foods to avoid</div><textarea id="dietAV" rows="1" style="margin-bottom:6px">${(diet.avoid||[]).join(', ')}</textarea><div class="form-label">Notes</div><textarea id="dietNT" rows="1" style="margin-bottom:8px">${diet.notes||''}</textarea><button class="btn btn-primary" onclick="saveDietPlanFromProfile(${p.id})">🥗 Save & notify patient+CHW</button>${state['dietSavedProfile_'+p.id]?`<div class="success-banner" style="margin-top:8px">✓ Diet plan updated!</div>`:''}</div>`:`<div class="info-banner" style="margin-bottom:12px"><span>ℹ️</span><span>Diet plans are set by the doctor or dietician. You can view and discuss with patient.</span></div>`}
+
+    <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Nutrition Targets</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Calories needed / day</div><input type="number" id="nutCalories" placeholder="e.g. 1800" value="${diet.caloriesNeeded||''}"></div><div><div class="form-label">Protein needed (g) / day</div><input type="number" id="nutProtein" placeholder="e.g. 60" value="${diet.proteinNeeded||''}"></div></div>${diet.macros?`<div class="muted" style="font-size:11px;margin-bottom:8px">Clinical macro targets — Carbs: ${diet.macros.carbs||'—'} · Protein: ${diet.macros.protein||'—'} · Fat: ${diet.macros.fat||'—'} · Fibre: ${diet.macros.fibre||'—'}</div>`:''}<button class="btn btn-blue" onclick="saveNutritionTargets(${p.id})">Save targets</button>${state['nutSaved_'+p.id]?`<div class="success-banner" style="margin-top:8px">✓ Targets updated!</div>`:''}</div>
+
+    <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">🏃 Exercise Recommendation</div><textarea id="exercisePlanText" rows="2" placeholder="e.g. 20 min brisk walk every morning">${p.exercise_plan||''}</textarea><button class="btn btn-primary" style="margin-top:8px" onclick="saveExercisePlan(${p.id})">Save exercise</button>${p.exercise_updated_by_name?`<div class="muted" style="margin-top:6px;font-size:11px">Last set by ${p.exercise_updated_by_name}</div>`:''}${state['exerciseSaved_'+p.id]?`<div class="success-banner" style="margin-top:8px">✓ Exercise updated!</div>`:''}</div>
+
+    <div class="form-label" style="margin-bottom:8px">CURRENT DIET PLAN${diet.bmiGroup?` — BMI Group ${diet.bmiGroup}`:''}</div>
+    ${diet.mealTimes && diet.mealTimes.length ? renderMealTimesTable(diet.mealTimes) : `${[['🌅 Breakfast',diet.breakfast||[]],['☀️ Lunch',diet.lunch||[]],['🌙 Dinner',diet.dinner||[]],['🍎 Snacks',diet.snacks||[]]].map(([title,items])=>`<div class="diet-section"><div class="diet-section-title">${title}</div>${items.length===0?`<div class="muted" style="font-size:12px">Not set</div>`:''}${items.map(item=>`<div class="diet-item"><div class="diet-dot"></div><span>${item}</span></div>`).join('')}</div>`).join('')}`}
+    ${diet.avoid&&diet.avoid.length?`<div class="diet-section"><div class="diet-section-title" style="color:#A32D2D">🚫 Avoid</div>${diet.avoid.map(item=>`<div class="diet-item"><div class="diet-dot" style="background:#E24B4A"></div><span>${item}</span></div>`).join('')}</div>`:''}
+    ${diet.strictAvoidance&&diet.strictAvoidance.length?`<div class="diet-section"><div class="diet-section-title" style="color:#A32D2D">⛔ Strict Avoidance / बिल्कुल न खाएं</div>${diet.strictAvoidance.map(item=>`<div class="diet-item"><div class="diet-dot" style="background:#E24B4A"></div><span>${item.en} · ${item.hi}</span></div>`).join('')}</div>`:''}
+    ${diet.specialAdvice&&diet.specialAdvice.length?`<div class="diet-section"><div class="diet-section-title">💡 Special Advice / विशेष सलाह</div>${diet.specialAdvice.map(item=>`<div class="diet-item"><div class="diet-dot"></div><span>${item.en} · ${item.hi}</span></div>`).join('')}</div>`:''}
+    ${diet.notes?`<div class="ai-block" style="margin-top:8px;font-size:12px"><b>Notes:</b> ${diet.notes}</div>`:''}
+    ${renderProviderAdherenceSection(p)}`;
+}
+
+function renderProviderAdherenceSection(p) {
+  const foodLogs = state.foodLogs[p.id] || [];
+  const exLogs = state.exerciseLogs[p.id] || [];
+  const todayFood = foodLogs.filter(f => new Date(f.created_at).toDateString() === new Date().toDateString());
+  const totalCal = todayFood.reduce((s,f)=>s+(f.calories||0),0);
+  const totalProtein = todayFood.reduce((s,f)=>s+(f.protein||0),0);
+  return `
+    <div class="card"><div class="card-title">🍽️ What the Patient Ate</div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Today: ${totalCal} kcal · ${totalProtein}g protein</div>
+      ${foodLogs.length===0?`<div class="muted">No food logged by the patient yet.</div>`:foodLogs.slice(0,10).map(f=>`<div class="flex-between" style="padding:6px 0;border-bottom:0.5px solid var(--color-border-tertiary);font-size:13px"><span>${f.food_name}</span><span class="muted">${f.calories||'—'} kcal · ${f.protein||'—'}g protein · ${timeAgo(f.created_at)}</span></div>`).join('')}
+    </div>
+    <div class="card"><div class="card-title">🏃 Exercise Adherence</div>
+      ${exLogs.length===0?`<div class="muted">Patient hasn't checked in on exercise yet.</div>`:`
+        <div class="muted" style="font-size:11px;margin-bottom:8px">Last 7 check-ins: ${exLogs.slice(0,7).map(e=>e.completed?'✅':'❌').join(' ')}</div>
+        ${exLogs.slice(0,10).map(e=>`<div class="flex-between" style="padding:6px 0;border-bottom:0.5px solid var(--color-border-tertiary);font-size:13px"><span>${e.completed?'✅ Done':'❌ Not done'}${e.notes?` — ${e.notes}`:''}</span><span class="muted">${timeAgo(e.created_at)}</span></div>`).join('')}`}
+    </div>`;
+}
+
+async function generateClinicalDietPlan(patientId) {
+  const sel = document.getElementById('dietBmiGroupOverride_' + patientId);
+  const notesEl = document.getElementById('dietGenNotes_' + patientId);
+  const bmi_group_override = sel && sel.value ? parseInt(sel.value) : null;
+  const additional_notes = notesEl ? notesEl.value.trim() : '';
+  state.loading['dietGen_' + patientId] = true; renderContent();
+  try {
+    await api(`/patients/${patientId}/diet-plans/generate`, 'POST', { bmi_group_override, additional_notes });
+    await fetchPatientSpecificData(patientId);
+    state['dietGenerated_' + patientId] = true;
+    setTimeout(() => { state['dietGenerated_' + patientId] = false; renderContent(); }, 4000);
+  } catch (e) {
+    alert('Could not generate diet plan: ' + e.message);
+  } finally {
+    state.loading['dietGen_' + patientId] = false; renderContent();
+  }
+}
+
+function renderProviderHistoryTab(p, logs) {
+  return `<div class="chart-bar-wrap" style="height:100px;margin-bottom:1rem">${logs.slice(0,14).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*96):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:9px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label" style="font-size:9px">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>${logs.length===0?`<div class="muted">No history yet.</div>`:logs.map(l=>`<div style="padding:10px 0;border-bottom:0.5px solid var(--color-border-tertiary)"><div class="flex-between"><div class="flex" style="gap:8px"><span class="badge ${l.blood_sugar>250?'b-red':l.blood_sugar>180?'b-amber':'b-green'}">${l.blood_sugar||'—'} mg/dL</span><span class="badge ${l.medication_taken?'b-green':'b-gray'}">${l.medication_taken?'Meds ✓':'Meds ✗'}</span></div><span class="muted" style="font-size:11px">${timeAgo(l.created_at)}</span></div>${l.raw_text?`<div style="margin-top:6px;font-size:13px;color:var(--color-text-secondary);font-style:italic">"${l.raw_text}"</div>`:''}</div>`).join('')}`;
+}
+
+function renderDoctorManageTab(p, rx) {
+  return `<div class="form-label" style="margin-bottom:8px;color:#0F6E56">Issue Prescription</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Medication</div><input type="text" id="manRxMed" placeholder="e.g. Metformin 1000mg" value="${rx?rx.medication_name:''}"></div><div><div class="form-label">Dosage</div><input type="text" id="manRxDose" value="${rx?rx.dosage:''}"></div></div><input type="text" id="manRxInstr" placeholder="Instructions..." value="${rx?.instructions||''}" style="margin-bottom:8px"><button class="btn btn-primary" onclick="issuePrescription(${p.id})" style="margin-bottom:.75rem;width:100%">💊 Issue prescription → notifies patient + CHW</button><hr class="sep"><div class="form-label" style="margin-bottom:8px;color:#0F6E56">Send Message to Patient</div><textarea id="notifMsg" rows="2" placeholder="Type message..." style="margin-bottom:8px"></textarea><button class="btn btn-blue" onclick="sendNotification(${p.id})">📲 Send message</button><hr class="sep"><div class="form-label" style="margin-bottom:8px;color:#0F6E56">AI Trend Check</div><button class="btn" onclick="runTrendCheck(${p.id})" style="width:100%">${state.loading['trend_'+p.id]?'<span class="spinner"></span>Checking...':'🤖 Run AI trend check'}</button>${state['trendResult_'+p.id]?`<div class="ai-block" style="margin-top:8px">${state['trendResult_'+p.id]}</div>`:''}`;
+}
+</script>
+</body>
+</html>

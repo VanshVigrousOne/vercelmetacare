@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "main.py", "use": "@vercel/python" },
+    { "src": "index.html", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/(ai|alerts|auth|chws|diet-plans|diet-reference|dieticians|doctors|lab-tests|notifications|patients|prescriptions|sentry-debug|tasks|visits)(.*)", "dest": "main.py" },
+    { "src": "/(.*)", "dest": "index.html" }
+  ],
+  "env": {
+    "VERCEL": "1"
+  }
+}
