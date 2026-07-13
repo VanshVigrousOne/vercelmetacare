@@ -257,6 +257,12 @@ class ClinicVisit(Base):
     doctor_accepted = Column(Boolean, default=False)
     chw_notified_acceptance = Column(Boolean, default=False)
     duration_minutes = Column(Integer, default=30)
+    # Whose calendar this visit occupies. A doctor's own clinic visits sit on
+    # the doctor's calendar; a CHW's patient visits (home visits, follow-ups)
+    # sit on that specific CHW's own calendar — never shared with other CHWs
+    # or written onto the doctor's schedule.
+    provider_role = Column(String, default="doctor")   # "doctor" | "chw"
+    provider_id = Column(Integer, nullable=True)        # doctors.id or chws.id, matching provider_role
     # Teleconsultation join info. The doctor/CHW only ever types the Google Meet
     # code (e.g. "abc-defg-hij") — the full join link is derived from it, and
     # that's what the patient sees.
@@ -294,6 +300,36 @@ class DoctorBreak(Base):
     date = Column(String)        # "YYYY-MM-DD"
     start_time = Column(String)  # "HH:MM"
     end_time = Column(String)    # "HH:MM"
+    reason = Column(String, default="Blocked")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ChwSettings(Base):
+    """A CHW's own working schedule — independent of the doctor's and of every
+    other CHW's. Each CHW under a doctor has their own row here, keyed by
+    chw_id, so their patient-visit calendars are never shared or merged."""
+    __tablename__ = "chw_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chw_id = Column(Integer, ForeignKey("chws.id"), unique=True)
+    working_start = Column(String, default="09:00")
+    working_end = Column(String, default="17:00")
+    lunch_start = Column(String, default="12:00")
+    lunch_end = Column(String, default="14:00")
+    slot_minutes = Column(Integer, default=30)
+    working_days = Column(JSON, default=[0, 1, 2, 3, 4, 5])  # Mon=0 ... Sun=6
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ChwBreak(Base):
+    """One-off blocked time ranges on a specific date, on a specific CHW's own calendar."""
+    __tablename__ = "chw_breaks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    chw_id = Column(Integer, ForeignKey("chws.id"))
+    date = Column(String)
+    start_time = Column(String)
+    end_time = Column(String)
     reason = Column(String, default="Blocked")
     created_at = Column(DateTime, default=datetime.utcnow)
 
