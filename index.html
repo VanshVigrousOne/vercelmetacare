@@ -151,7 +151,10 @@ textarea:focus,input:focus,select:focus{border-color:#0F6E56;box-shadow:0 0 0 2p
         <div class="h1" style="font-size:22px;margin-bottom:.5rem">MetaCare Login</div>
         <div class="muted" style="margin-bottom:1.5rem;text-align:left">Sign in with your phone number and password.</div>
         <div class="form-label" style="text-align:left">Phone number</div>
-        <input type="text" id="loginPhone" placeholder="+91-9876543210" style="margin-bottom:12px">
+        <div class="flex" style="margin-bottom:12px;gap:6px">
+          <span class="btn" style="padding:8px 10px;cursor:default;flex-shrink:0;background:var(--color-background-secondary)">+91</span>
+          <input type="text" id="loginPhone" placeholder="9876543210" maxlength="10" inputmode="numeric" oninput="sanitizePhoneDigits(this)">
+        </div>
         <div class="form-label" style="text-align:left">Password</div>
         <input type="password" id="loginPassword" placeholder="••••••••" style="margin-bottom:12px">
         <div class="form-label" style="text-align:left">Role</div>
@@ -201,7 +204,7 @@ let currentUser = null;
 let state = {
   role: 'Patient', patientId: null, selectedTask: null, selectedAlert: null,
   selectedPatient: null, addingPatient: false, addingCHW: false, loading: {}, flash: null,
-  patientTab: 'overview', providerPatientTab: 'overview',
+  patientTab: 'overview', providerPatientTab: 'overview', patientSearch: '',
   dietPlans: {}, visits: {}, testResults: {}, visitRequests: {}, foodLogs: {}, exerciseLogs: {}
 };
 
@@ -209,6 +212,63 @@ let db = {
   patients: [], chws: [], dieticians: [], availablePatients: [], logs: [], tasks: [], alerts: [],
   notifications: [], prescriptions: [], events: []
 };
+
+// ── Shared form helpers ──────────────────────────────────────────────────────
+function sanitizePhoneDigits(el) { el.value = el.value.replace(/\D/g,'').slice(0,10); }
+function isValidPhoneDigits(v) { return /^\d{10}$/.test(v||''); }
+function calcAgeFromDob(dobStr) {
+  if (!dobStr) return null;
+  const dob = new Date(dobStr);
+  if (isNaN(dob.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+  return age >= 0 ? age : null;
+}
+function updateComputedAge(dobElId, displayElId) {
+  const dobVal = document.getElementById(dobElId)?.value;
+  const age = calcAgeFromDob(dobVal);
+  const disp = document.getElementById(displayElId);
+  if (disp) disp.textContent = age !== null ? (age + ' years') : '—';
+}
+function loginScreenMarkup(errMsg) {
+  return `
+    <div class="setup-screen" id="setupScreen">
+      <div class="setup-card">
+        <div style="font-size:28px;margin-bottom:.5rem">🏥</div>
+        <div class="h1" style="font-size:22px;margin-bottom:.5rem">MetaCare Login</div>
+        <div class="muted" style="margin-bottom:1.5rem;text-align:left">Sign in with your phone number and password.</div>
+        <div class="form-label" style="text-align:left">Phone number</div>
+        <div class="flex" style="margin-bottom:12px;gap:6px">
+          <span class="btn" style="padding:8px 10px;cursor:default;flex-shrink:0;background:var(--color-background-secondary)">+91</span>
+          <input type="text" id="loginPhone" placeholder="9876543210" maxlength="10" inputmode="numeric" oninput="sanitizePhoneDigits(this)">
+        </div>
+        <div class="form-label" style="text-align:left">Password</div>
+        <input type="password" id="loginPassword" placeholder="••••••••" style="margin-bottom:12px">
+        <div class="form-label" style="text-align:left">Role</div>
+        <select id="loginRole" style="margin-bottom:1.5rem">
+          <option value="patient">Patient</option>
+          <option value="chw">CHW (Community Health Worker)</option>
+          <option value="dietician">Dietician</option>
+          <option value="doctor">Doctor</option>
+        </select>
+        <button class="btn btn-primary" id="loginBtn" onclick="loginUser()" style="width:100%">Log in →</button>
+        <div id="loginError" style="color:#A32D2D;font-size:12px;margin-top:8px;min-height:18px;text-align:left">${errMsg ? errMsg.replace(/</g,'&lt;') : ''}</div>
+        <div style="margin-top:1.25rem;padding:10px 12px;background:var(--color-background-secondary);border-radius:8px;text-align:left">
+          <div style="font-size:11px;font-weight:500;color:var(--color-text-secondary);margin-bottom:6px">DEMO CREDENTIALS</div>
+          <div style="font-size:11px;color:var(--color-text-secondary);line-height:1.8">
+            Doctor: 9801234567 / doctor123<br>CHW: 9712345678 / chw123<br>Dietician: 9723456789 / dietician123<br>
+            Patient 1: 9876543210 / ramesh123<br>Patient 2: 9876543211 / sunita123
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="setup-screen" id="consentScreen" style="display:none"></div>`;
+}
+function renderLoginScreen(errMsg) {
+  document.getElementById('mainArea').innerHTML = loginScreenMarkup(errMsg);
+}
 
 // ── API Helpers ────────────────────────────────────────────────────────────────
 function getToken()   { return sessionStorage.getItem('mc_token'); }
@@ -235,12 +295,14 @@ async function api(path, method = 'GET', body = null) {
 
 // ── Authentication ─────────────────────────────────────────────────────────────
 async function loginUser() {
-  const phone = document.getElementById('loginPhone').value.trim();
+  const phoneDigits = document.getElementById('loginPhone').value.trim();
   const password = document.getElementById('loginPassword').value;
   const role = document.getElementById('loginRole').value;
   const errEl = document.getElementById('loginError');
   errEl.textContent = '';
-  if (!phone || !password) { errEl.textContent = 'Please enter phone and password.'; return; }
+  if (!phoneDigits || !password) { errEl.textContent = 'Please enter phone and password.'; return; }
+  if (!isValidPhoneDigits(phoneDigits)) { errEl.textContent = 'Please enter a valid 10-digit phone number.'; return; }
+  const phone = '+91-' + phoneDigits;
 
   const btn = document.getElementById('loginBtn');
   btn.disabled = true; btn.textContent = 'Signing in…';
@@ -250,7 +312,11 @@ async function loginUser() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, password, role })
     });
-    if (!res.ok) throw new Error('Login failed. Check credentials.');
+    if (!res.ok) {
+      let msg = 'Invalid phone number, password, or role. Please try again.';
+      try { const err = await res.json(); if (err && err.detail) msg = typeof err.detail === 'string' ? err.detail : msg; } catch (_) {}
+      throw new Error(msg);
+    }
     const data = await res.json();
     sessionStorage.setItem('mc_token', data.access_token);
     sessionStorage.setItem('mc_role', data.role);
@@ -258,7 +324,6 @@ async function loginUser() {
     sessionStorage.setItem('mc_name', data.name);
     state.role = data.role === 'chw' ? 'CHW' : data.role.charAt(0).toUpperCase() + data.role.slice(1);
 
-    document.getElementById('setupScreen').style.display = 'none';
     document.getElementById('mainArea').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;flex:1"><div><span class="spinner"></span> Loading your data…</div></div>';
 
     await fetchAllData();
@@ -271,10 +336,14 @@ async function loginUser() {
     renderApp();
     document.getElementById('chatbot-bubble').style.display = 'block';
   } catch (e) {
-    errEl.textContent = e.message;
-    document.getElementById('setupScreen').style.display = 'flex';
-    document.getElementById('mainArea').innerHTML = '';
-    btn.disabled = false; btn.textContent = 'Log in →';
+    // Session may be half-set from a failed post-login step — clear it and
+    // always rebuild a fresh, working login screen with the error shown,
+    // rather than risk leaving a blank page behind.
+    sessionStorage.removeItem('mc_token');
+    sessionStorage.removeItem('mc_role');
+    sessionStorage.removeItem('mc_user_id');
+    sessionStorage.removeItem('mc_name');
+    renderLoginScreen(e.message || 'Invalid input. Please check your details and try again.');
   }
 }
 
@@ -719,7 +788,7 @@ async function submitReport() {
     await refreshPatientData(state.patientId);
     state.flash = { type:'ok', msg:'Report submitted! Your care team has been notified.' };
   } catch (e) { state.flash = { type:'err', msg:'Failed: ' + e.message }; }
-  state.loading.submit = false; renderSidebar(); renderContent();
+  state.loading.submit = false; renderTabs(); renderSidebar(); renderContent();
 }
 
 async function markNotificationsRead() {
@@ -739,7 +808,7 @@ async function scheduleVisit(patientId, fromProfile=false) {
     });
     await refreshPatientData(patientId);
     state.providerPatientTab = 'visits';
-    renderSidebar(); renderContent();
+    renderTabs(); renderSidebar(); renderContent();
   } catch(e) { alert('Failed to schedule visit: ' + e.message); }
 }
 
@@ -751,14 +820,14 @@ async function requestDoctorVisit(patientId) {
     await api(`/patients/${patientId}/request-visit`, 'POST', { reason: reason, visit_type: 'Impromptu' });
     await fetchAllData();
     alert('Visit requested.');
-    renderSidebar(); renderContent();
+    renderTabs(); renderSidebar(); renderContent();
   } catch(e) { alert('Request failed: ' + e.message); }
 }
 
 function requestDoctorVisitFromProfile(patientId) {
   const reason = document.getElementById('pvVisitReason')?.value?.trim() || 'Follow-up required';
   api(`/patients/${patientId}/request-visit`, 'POST', { reason: reason, visit_type: 'Impromptu' })
-    .then(() => { fetchAllData().then(() => { renderSidebar(); renderContent(); }); });
+    .then(() => { fetchAllData().then(() => { renderTabs(); renderSidebar(); renderContent(); }); });
 }
 
 async function patientRequestVisit(patientId) {
@@ -770,7 +839,7 @@ async function patientRequestVisit(patientId) {
     state.flashVisit = 'Visit requested — your CHW has been notified.';
   } catch(e) { alert('Request failed: ' + e.message); }
   state.loading.selfVisit = false;
-  renderSidebar(); renderContent();
+  renderTabs(); renderSidebar(); renderContent();
 }
 
 async function doctorAcceptCase(patientId, alertId) {
@@ -784,7 +853,7 @@ async function doctorAcceptCase(patientId, alertId) {
     state.selectedAlert = null; state.selectedPatient = patientId; state.providerPatientTab = 'visits';
   } catch(e) { alert('Failed: ' + e.message); }
   state.loading['accept_'+alertId] = false;
-  renderSidebar(); renderContent();
+  renderTabs(); renderSidebar(); renderContent();
 }
 
 function recordVisitOutcome(visitId, patientId) { state.recordingVisit = visitId; renderContent(); }
@@ -839,7 +908,7 @@ async function saveExercisePlan(patientId) {
     await fetchAllData();
     state['exerciseSaved_'+patientId] = true;
     setTimeout(() => { state['exerciseSaved_'+patientId] = false; renderContent(); }, 3000);
-    renderSidebar(); renderContent();
+    renderTabs(); renderSidebar(); renderContent();
   } catch(e) { alert('Failed: ' + e.message); }
 }
 
@@ -911,7 +980,7 @@ async function saveTestResult(patientId) {
     await api(`/lab-tests/${state.enteringTestResult}`, 'PUT', { status: 'Completed', result_value: value, is_abnormal: (status === 'High') });
     await fetchAllData();
     state.enteringTestResult = null;
-    renderSidebar(); renderContent();
+    renderTabs(); renderSidebar(); renderContent();
   } catch(e) { alert('Failed: ' + e.message); }
 }
 
@@ -924,7 +993,7 @@ async function validateTask(taskId) {
     await fetchAllData();
   } catch(e) { alert('Failed: ' + e.message); }
   state.loading['validate_'+taskId] = false;
-  renderSidebar(); renderContent();
+  renderTabs(); renderSidebar(); renderContent();
 }
 
 async function sendNotification(patientId) {
@@ -947,12 +1016,12 @@ async function suggestPrescription(patientId) {
     await api(`/patients/${patientId}/suggest-prescription`, 'POST', { medication_name: med, dosage: dose });
     await fetchAllData();
   } catch(e) {}
-  state.loading['rx_'+patientId] = false; renderSidebar(); renderContent();
+  state.loading['rx_'+patientId] = false; renderTabs(); renderSidebar(); renderContent();
 }
 
-async function resolveTask(taskId) { try { await api(`/tasks/${taskId}/resolve`, 'POST'); await fetchAllData(); state.selectedTask=null; renderSidebar(); renderContent(); } catch(e){} }
-async function escalateTask(taskId) { try { await api(`/tasks/${taskId}/escalate`, 'POST'); await fetchAllData(); state.selectedTask=null; renderSidebar(); renderContent(); } catch(e){} }
-async function resolveAlert(alertId) { try { await api(`/alerts/${alertId}/resolve`, 'POST'); await fetchAllData(); state.selectedAlert=null; renderSidebar(); renderContent(); } catch(e){} }
+async function resolveTask(taskId) { try { await api(`/tasks/${taskId}/resolve`, 'POST'); await fetchAllData(); state.selectedTask=null; renderTabs(); renderSidebar(); renderContent(); } catch(e){} }
+async function escalateTask(taskId) { try { await api(`/tasks/${taskId}/escalate`, 'POST'); await fetchAllData(); state.selectedTask=null; renderTabs(); renderSidebar(); renderContent(); } catch(e){} }
+async function resolveAlert(alertId) { try { await api(`/alerts/${alertId}/resolve`, 'POST'); await fetchAllData(); state.selectedAlert=null; renderTabs(); renderSidebar(); renderContent(); } catch(e){} }
 
 async function issuePrescription(patientId) {
   const med = (document.getElementById('docRxMed') || document.getElementById('manRxMed')).value.trim();
@@ -963,7 +1032,7 @@ async function issuePrescription(patientId) {
     await api('/prescriptions', 'POST', { patient_id: patientId, medication_name: med, dosage: dose });
     await fetchAllData();
   } catch(e) {}
-  state.loading['docRx_'+patientId] = false; renderSidebar(); renderContent();
+  state.loading['docRx_'+patientId] = false; renderTabs(); renderSidebar(); renderContent();
 }
 
 async function deepAnalysis(patientId, alertId) {
@@ -989,12 +1058,11 @@ async function runTrendCheck(patientId) {
 
 async function saveNewPatient() {
   const name = document.getElementById('newPatName').value.trim();
-  const age = document.getElementById('newPatAge').value;
-  const phone = document.getElementById('newPatPhone').value.trim();
+  const phoneDigits = document.getElementById('newPatPhone').value.trim();
   const genderEl = document.querySelector('input[name="newPatGenderR"]:checked');
   const gender = genderEl ? genderEl.value : null;
   const village = document.getElementById('newPatVillage')?.value.trim() || null;
-  const condition = document.getElementById('newPatCondition')?.value || 'Type 2 Diabetes';
+  let condition = document.getElementById('newPatCondition')?.value || 'Type 2 Diabetes';
   const password = document.getElementById('newPatPassword').value.trim() || 'patient123';
   const a1c = document.getElementById('newPatA1c').value;
   const weight = document.getElementById('newPatWeight').value;
@@ -1016,10 +1084,25 @@ async function saveNewPatient() {
   const referred_by_name = get('newPatReferredName');
   const referred_by_specialization = get('newPatReferredSpec');
   const channel = get('newPatChannel');
-  const phone2 = get('newPatPhone2');
+  const phone2Digits = get('newPatPhone2');
   const tag = get('newPatTag');
 
-  if (!name || !phone) { if(errEl) errEl.textContent = 'Name and phone are required.'; return; }
+  if (!name || !phoneDigits) { if(errEl) errEl.textContent = 'Name and phone are required.'; return; }
+  if (!isValidPhoneDigits(phoneDigits)) { if(errEl) errEl.textContent = 'Please enter a valid 10-digit mobile number.'; return; }
+  if (phone2Digits && !isValidPhoneDigits(phone2Digits)) { if(errEl) errEl.textContent = 'Mobile 2 must be a valid 10-digit number.'; return; }
+  if (!dobVal) { if(errEl) errEl.textContent = 'Please enter a date of birth.'; return; }
+  const age = calcAgeFromDob(dobVal);
+  if (age === null) { if(errEl) errEl.textContent = 'Please enter a valid date of birth.'; return; }
+  if (height && parseFloat(height) > 200) { if(errEl) errEl.textContent = 'Height looks too high — please check and re-enter (must be 200 cm or less).'; return; }
+
+  if (condition === 'Other') {
+    const other = get('newPatConditionOther');
+    if (!other) { if(errEl) errEl.textContent = 'Please type the condition.'; return; }
+    condition = other;
+  }
+
+  const phone = '+91-' + phoneDigits;
+  const phone2 = phone2Digits ? '+91-' + phone2Digits : null;
 
   const chwEl = document.getElementById('newPatCHW');
   const chw_id = getSession().role === 'chw' ? getSession().userId : (chwEl ? parseInt(chwEl.value) : db.chws[0]?.id);
@@ -1029,7 +1112,7 @@ async function saveNewPatient() {
 
   try {
     const newPat = await api('/patients/register', 'POST', {
-      name, phone, age: parseInt(age)||null, password, chw_id, doctor_id,
+      name, phone, age: age, password, chw_id, doctor_id,
       gender: gender||null, village: village||null, condition,
       hba1c: parseFloat(a1c)||null, weight: parseFloat(weight)||null, height_cm: parseFloat(height)||null,
       title, dob: dobVal ? new Date(dobVal).toISOString() : null, existing_id, blood_group,
@@ -1038,31 +1121,35 @@ async function saveNewPatient() {
     });
     await fetchAllData();
     state.addingPatient = false; state.selectedPatient = newPat.id;
+    alert(`✅ ${name} has been added successfully.`);
   } catch(e) {
     if(errEl) errEl.textContent = 'Failed: ' + e.message;
     return;
   }
-  renderSidebar(); renderContent();
+  renderTabs(); renderSidebar(); renderContent();
 }
 
 async function saveNewCHW() {
   const name = document.getElementById('newChwName').value.trim();
-  const phone = document.getElementById('newChwPhone').value.trim();
+  const phoneDigits = document.getElementById('newChwPhone').value.trim();
   const area = document.getElementById('newChwArea')?.value.trim() || null;
   const password = document.getElementById('newChwPassword').value.trim() || 'chw123';
   const errEl = document.getElementById('newChwError');
 
-  if (!name || !phone) { if(errEl) errEl.textContent = 'Name and phone are required.'; return; }
+  if (!name || !phoneDigits) { if(errEl) errEl.textContent = 'Name and phone are required.'; return; }
+  if (!isValidPhoneDigits(phoneDigits)) { if(errEl) errEl.textContent = 'Please enter a valid 10-digit phone number.'; return; }
+  const phone = '+91-' + phoneDigits;
 
   try {
     await api('/chws/register', 'POST', { name, phone, area: area||null, password, doctor_id: getSession().userId });
     await fetchAllData();
     state.addingCHW = false;
+    alert(`✅ ${name} has been added successfully.`);
   } catch(e) {
     if(errEl) errEl.textContent = 'Failed: ' + e.message;
     return;
   }
-  renderSidebar(); renderContent();
+  renderTabs(); renderSidebar(); renderContent();
 }
 
 function showAddPatient() { state.selectedTask=null; state.selectedAlert=null; state.selectedPatient=null; state.addingCHW=false; state.addingDietician=false; state.addingPatient=true; renderContent(); }
@@ -1071,22 +1158,25 @@ function showAddDietician() { state.selectedTask=null; state.selectedAlert=null;
 
 async function saveNewDietician() {
   const name = document.getElementById('newDietName').value.trim();
-  const phone = document.getElementById('newDietPhone').value.trim();
+  const phoneDigits = document.getElementById('newDietPhone').value.trim();
   const specialization = document.getElementById('newDietSpecialization')?.value.trim() || null;
   const password = document.getElementById('newDietPassword').value.trim() || 'diet123';
   const errEl = document.getElementById('newDietError');
 
-  if (!name || !phone) { if(errEl) errEl.textContent = 'Name and phone are required.'; return; }
+  if (!name || !phoneDigits) { if(errEl) errEl.textContent = 'Name and phone are required.'; return; }
+  if (!isValidPhoneDigits(phoneDigits)) { if(errEl) errEl.textContent = 'Please enter a valid 10-digit phone number.'; return; }
+  const phone = '+91-' + phoneDigits;
 
   try {
     await api('/dieticians/register', 'POST', { name, phone, specialization: specialization||null, password, doctor_id: getSession().userId });
     await fetchAllData();
     state.addingDietician = false;
+    alert(`✅ ${name} has been added successfully.`);
   } catch(e) {
     if(errEl) errEl.textContent = 'Failed: ' + e.message;
     return;
   }
-  renderSidebar(); renderContent();
+  renderTabs(); renderSidebar(); renderContent();
 }
 
 // ── App shell & Rendering ──────────────────────────────────────────────────────
@@ -1118,11 +1208,34 @@ function renderApp() {
 function renderTabs() {
   const sess = getSession();
   const roles = sess.role === 'patient' ? ['Patient'] : sess.role === 'chw' ? ['CHW'] : sess.role === 'dietician' ? ['Dietician'] : ['Doctor'];
-  const unreadCount = db.notifications.filter(n => !n.read).length;
+
+  // Bell count is role-specific: doctors/CHWs see open alerts/tasks that need
+  // their attention, patients see unread messages from their care team.
+  let bellCount = 0;
+  if (sess.role === 'doctor') bellCount = getActiveAlerts().length;
+  else if (sess.role === 'chw') bellCount = getPendingTasks().length;
+  else if (sess.role === 'patient') bellCount = getNotifications(state.patientId).filter(n => !n.read).length;
+
+  const bellHtml = (sess.role !== 'dietician') ? `<div class="notif-badge"><button class="btn btn-small" style="font-size:14px" onclick="openAlertsBell()" title="View alerts">🔔</button>${bellCount > 0 ? `<span class="notif-badge-count">${bellCount}</span>` : ''}</div>` : '';
+
   document.getElementById('roleTabs').innerHTML =
     roles.map(r => `<button class="role-tab ${state.role===r?'active':''}" onclick="switchRole('${r}')">${r}</button>`).join('') +
-    (sess.role !== 'patient' && unreadCount > 0 ? `<div class="notif-badge"><button class="btn btn-small" style="font-size:11px" onclick="state.role=(getSession().role==='chw'?'CHW':'Doctor');renderTabs();renderSidebar();renderContent();">🔔</button><span class="notif-badge-count">${unreadCount}</span></div>` : '') +
+    bellHtml +
     `<button class="btn btn-small" style="margin-left:8px;font-size:11px;color:#A32D2D" onclick="logout()">Sign out</button>`;
+}
+
+// Bell click: jump straight to the alerts/tasks/messages relevant to this role.
+function openAlertsBell() {
+  const sess = getSession();
+  state.addingPatient = false; state.addingCHW = false; state.addingDietician = false;
+  if (sess.role === 'doctor') {
+    state.role = 'Doctor'; state.selectedAlert = null; state.selectedPatient = null;
+  } else if (sess.role === 'chw') {
+    state.role = 'CHW'; state.selectedTask = null; state.selectedPatient = null;
+  } else if (sess.role === 'patient') {
+    state.role = 'Patient'; state.patientTab = 'messages';
+  }
+  renderTabs(); renderSidebar(); renderContent();
 }
 
 function switchRole(r) { state.role=r; state.selectedTask=null; state.selectedAlert=null; state.selectedPatient=null; state.addingPatient=false; state.addingCHW=false; state.addingDietician=false; renderTabs(); renderSidebar(); renderContent(); }
@@ -1132,6 +1245,11 @@ function renderSidebar() {
   const sess = getSession();
   const patient = getPatient(state.patientId);
   const unread = getNotifications(state.patientId).filter(n => !n.read).length;
+  const wasSearchFocused = document.activeElement && document.activeElement.id === 'patientSearchInput';
+  const searchCursorPos = wasSearchFocused ? document.activeElement.selectionStart : null;
+  const q = (state.patientSearch || '').trim().toLowerCase();
+  const matchesSearch = p => !q || (p.name||'').toLowerCase().includes(q) || (p.village||'').toLowerCase().includes(q) || (p.phone||'').toLowerCase().includes(q);
+  const searchBoxHtml = `<div style="margin:0 4px 8px 4px"><input type="text" id="patientSearchInput" placeholder="🔍 Search patient by name, village, phone..." value="${(state.patientSearch||'').replace(/"/g,'&quot;')}" oninput="state.patientSearch=this.value;renderSidebar()" style="font-size:12px;padding:6px 8px"></div>`;
 
   if (state.role === 'Patient') {
     sb.innerHTML = `
@@ -1158,7 +1276,8 @@ function renderSidebar() {
         <div style="padding:8px 10px"><div class="flex"><div class="avatar av-coral" style="font-size:11px">${initials(sess.name)}</div><div><div class="name-line">${sess.name}</div><div class="sub-line">Community Health Worker</div></div></div></div>
       </div>
       <div class="flex-between" style="margin:0 4px 8px 4px"><div class="sidebar-label" style="margin:0">Patients (${db.patients.length})</div><button class="btn btn-small" onclick="showAddPatient()">+ New</button></div>
-      ${db.patients.map(p => {
+      ${searchBoxHtml}
+      ${db.patients.filter(matchesSearch).map(p => {
         const pt = db.tasks.filter(t=>t.patient_id===p.id&&t.status==='Pending');
         const em = pt.filter(t=>t.ai_classification==='Emergency'||t.critical_sugar_alert);
         const vReqs = (state.visitRequests[p.id]||[]).filter(r=>r.status==='Pending Doctor Response');
@@ -1185,8 +1304,9 @@ function renderSidebar() {
         <div style="padding:8px 10px"><div class="flex"><div class="avatar av-amber" style="font-size:11px">${initials(sess.name)}</div><div><div class="name-line">${sess.name}</div><div class="sub-line">Dietician · Diet &amp; Exercise only</div></div></div></div>
       </div>
       <div class="sidebar-label" style="margin:0 4px 8px 4px">My Patients (${db.patients.length})</div>
+      ${searchBoxHtml}
       ${db.patients.length===0?`<div class="muted" style="font-size:12px;padding:4px">No patients assigned to you yet.</div>`:''}
-      ${db.patients.map(p => `<div class="patient-item ${state.selectedPatient===p.id?'active':''}" onclick="state.selectedPatient=${p.id};renderContent()">
+      ${db.patients.filter(matchesSearch).map(p => `<div class="patient-item ${state.selectedPatient===p.id?'active':''}" onclick="state.selectedPatient=${p.id};renderContent()">
           <div class="avatar av-teal" style="font-size:11px">${initials(p.name)}</div>
           <div style="flex:1;min-width:0"><div class="name-line" style="font-size:12px">${p.name}</div><div class="sub-line">${p.age||'--'}y · ${p.village||''}</div></div>
         </div>`).join('')}`;
@@ -1200,9 +1320,11 @@ function renderSidebar() {
         <div class="sidebar-label" style="margin:0">Care Team</div>
         <div style="display:flex;gap:4px"><button class="btn btn-small" onclick="showAddCHW()">+ CHW</button><button class="btn btn-small" onclick="showAddDietician()">+ Diet</button><button class="btn btn-small" onclick="showAddPatient()">+ Pat</button></div>
       </div>
+      ${searchBoxHtml}
       ${db.chws.length===0?`<div class="muted" style="font-size:12px;padding:4px">No CHWs.</div>`:''}
       ${db.chws.map(c => {
-        const chwPats = db.patients.filter(p=>p.chw_id===c.id);
+        const chwPats = db.patients.filter(p=>p.chw_id===c.id).filter(matchesSearch);
+        if (q && chwPats.length===0) return '';
         return `<div style="margin-top:8px;margin-bottom:4px;padding:0 4px"><div class="name-line" style="font-size:12px;color:var(--color-text-secondary)">👩‍⚕️ ${c.name}</div></div>
         ${chwPats.map(p => {
           const pa = db.alerts.filter(a=>a.patient_id===p.id&&!a.is_resolved);
@@ -1214,6 +1336,11 @@ function renderSidebar() {
           </div>`;
         }).join('')}`;
       }).join('')}`;
+  }
+
+  if (wasSearchFocused) {
+    const si = document.getElementById('patientSearchInput');
+    if (si) { si.focus(); if (searchCursorPos !== null) si.setSelectionRange(searchCursorPos, searchCursorPos); }
   }
 }
 
@@ -1239,7 +1366,7 @@ function renderPatientView(el) {
 
   const tabContent = {
     overview: renderPatientOverviewTab(patient, logs, rx, unread),
-    report: renderPatientReportTab(patient), history: renderPatientHistoryTab(patient, logs),
+    report: renderPatientReportTab(patient, rx), history: renderPatientHistoryTab(patient, logs),
     messages: renderPatientMessagesTab(patient, notifs, unread), diet: renderPatientDietTab(patient),
     visits: renderPatientVisitsTab(patient), tests: renderPatientTestsTab(patient),
   };
@@ -1318,8 +1445,11 @@ function renderPatientOverviewTab(patient, logs, rx, unread) {
     ${diet?`<div class="card"><div class="card-title">🥗 Today's Diet Reminder</div><div style="font-size:13px;color:#085041;background:#E1F5EE;border-radius:8px;padding:10px;line-height:1.7"><b>Breakfast:</b> ${(diet.breakfast||[]).join(' · ')}<br><b>Snacks:</b> ${(diet.snacks||[]).slice(0,1).join(' · ')}<br><b style="color:#A32D2D">Avoid:</b> ${(diet.avoid||[]).slice(0,2).join(', ')}</div><button class="btn btn-small" style="margin-top:8px" onclick="state.patientTab='diet';renderContent()">View full diet plan →</button></div>`:''}`;
 }
 
-function renderPatientReportTab(patient) {
-  return `<div class="card"><div class="card-title">📝 Submit Today's Health Report</div><div class="form-label">How are you feeling? (Hinglish is fine)</div><textarea id="reportText" rows="3" placeholder="e.g. Aaj thoda chakkar aa raha hai, dawai li..." style="margin-bottom:10px"></textarea><div class="grid2" style="margin-bottom:10px"><div><div class="form-label">Blood sugar (mg/dL)</div><input type="number" id="sugarInput" placeholder="e.g. 187"></div><div><div class="form-label">Medication taken today?</div><select id="medsInput"><option value="true">Yes ✓</option><option value="false">No ✗</option></select></div></div><div class="row"><button class="btn btn-primary" onclick="submitReport()">${state.loading.submit?'<span class="spinner"></span>Sending...':'Submit report'}</button>${state.flash?`<div class="${state.flash.type==='ok'?'success-banner':'alert-banner'}" style="flex:1;margin:0">${state.flash.msg}</div>`:''}</div></div><div class="info-banner"><span>ℹ️</span><span>Your report will be reviewed by your CHW. In an emergency, call CHW directly.</span></div>`;
+function renderPatientReportTab(patient, rx) {
+  const medsField = rx
+    ? `<div><div class="form-label">Took prescribed medicine today?</div><div class="muted" style="font-size:11px;margin-bottom:4px">💊 ${rx.medication_name} — ${rx.dosage}</div><select id="medsInput"><option value="true">Yes ✓</option><option value="false">No ✗</option></select></div>`
+    : `<div><div class="form-label">Medication taken today?</div><select id="medsInput" disabled><option value="false">No active prescription</option></select><div class="muted" style="font-size:11px;margin-top:4px">Your doctor hasn't issued a prescription yet.</div></div>`;
+  return `<div class="card"><div class="card-title">📝 Submit Today's Health Report</div><div class="form-label">How are you feeling? (Hinglish is fine)</div><textarea id="reportText" rows="3" placeholder="e.g. Aaj thoda chakkar aa raha hai, dawai li..." style="margin-bottom:10px"></textarea><div class="grid2" style="margin-bottom:10px"><div><div class="form-label">Blood sugar (mg/dL)</div><input type="number" id="sugarInput" placeholder="e.g. 187"></div>${medsField}</div><div class="row"><button class="btn btn-primary" onclick="submitReport()">${state.loading.submit?'<span class="spinner"></span>Sending...':'Submit report'}</button>${state.flash?`<div class="${state.flash.type==='ok'?'success-banner':'alert-banner'}" style="flex:1;margin:0">${state.flash.msg}</div>`:''}</div></div><div class="info-banner"><span>ℹ️</span><span>Your report will be reviewed by your CHW. In an emergency, call CHW directly.</span></div>`;
 }
 
 function renderPatientHistoryTab(patient, logs) {
@@ -1451,7 +1581,7 @@ async function addPatientAsDietician() {
     alert('Could not add patient: ' + e.message);
   } finally {
     state.loading['addDieticianPatient'] = false;
-    renderSidebar(); renderContent();
+    renderTabs(); renderSidebar(); renderContent();
   }
 }
 
@@ -1549,10 +1679,15 @@ function renderAddPatientView(el) {
             </div>
           </div>
           <div class="grid2" style="margin-bottom:10px">
-            <div><div class="form-label">Age</div><input type="number" id="newPatAge" placeholder="Age" min="1" max="120"></div>
-            <div><div class="form-label">DOB</div><input type="date" id="newPatDob"></div>
+            <div><div class="form-label">DOB *</div><input type="date" id="newPatDob" max="${new Date().toISOString().split('T')[0]}" oninput="updateComputedAge('newPatDob','newPatAgeDisplay')"></div>
+            <div><div class="form-label">Age (calculated)</div><div id="newPatAgeDisplay" style="padding:8px 10px;border:0.5px solid var(--color-border-tertiary);border-radius:8px;background:var(--color-background-secondary);font-size:13px">—</div></div>
           </div>
-          <div style="margin-bottom:10px"><div class="form-label">Mobile *</div><input type="text" id="newPatPhone" placeholder="+91-9876543210"></div>
+          <div style="margin-bottom:10px"><div class="form-label">Mobile *</div>
+            <div class="flex" style="gap:6px">
+              <span class="btn" style="padding:8px 10px;cursor:default;flex-shrink:0;background:var(--color-background-secondary)">+91</span>
+              <input type="text" id="newPatPhone" placeholder="9876543210" maxlength="10" inputmode="numeric" oninput="sanitizePhoneDigits(this)">
+            </div>
+          </div>
           <div style="margin-bottom:10px"><div class="form-label">Existing ID</div><input type="text" id="newPatExistingId" placeholder="Existing ID"></div>
           <div class="grid2" style="margin-bottom:10px">
             <div><div class="form-label">Blood Group</div><select id="newPatBloodGroup"><option value="">Blood Group</option><option>A+</option><option>A-</option><option>B+</option><option>B-</option><option>AB+</option><option>AB-</option><option>O+</option><option>O-</option></select></div>
@@ -1574,7 +1709,12 @@ function renderAddPatientView(el) {
           </div>
           <div style="margin-bottom:10px"><div class="form-label">Channel</div><input type="text" id="newPatChannel"></div>
           <div class="grid2" style="margin-bottom:10px">
-            <div><div class="form-label">Mobile 2</div><input type="text" id="newPatPhone2"></div>
+            <div><div class="form-label">Mobile 2</div>
+              <div class="flex" style="gap:6px">
+                <span class="btn" style="padding:8px 10px;cursor:default;flex-shrink:0;background:var(--color-background-secondary)">+91</span>
+                <input type="text" id="newPatPhone2" placeholder="9876543210" maxlength="10" inputmode="numeric" oninput="sanitizePhoneDigits(this)">
+              </div>
+            </div>
             <div><div class="form-label">Tag</div><input type="text" id="newPatTag"></div>
           </div>
         </div>
@@ -1582,12 +1722,17 @@ function renderAddPatientView(el) {
       <hr class="sep">
       <div class="grid2" style="margin-bottom:10px">
         <div><div class="form-label">Village / Area</div><input type="text" id="newPatVillage" placeholder="e.g. Khategaon, Dewas"></div>
-        <div><div class="form-label">Condition</div><select id="newPatCondition"><option>Type 2 Diabetes</option><option>Type 1 Diabetes</option><option>Pre-Diabetes</option><option>Gestational Diabetes</option></select></div>
+        <div><div class="form-label">Condition</div>
+          <select id="newPatCondition" onchange="document.getElementById('newPatConditionOtherWrap').style.display=this.value==='Other'?'block':'none'">
+            <option>Type 2 Diabetes</option><option>Type 1 Diabetes</option><option>Pre-Diabetes</option><option>Gestational Diabetes</option><option value="Other">Other (type below)</option>
+          </select>
+          <div id="newPatConditionOtherWrap" style="display:none;margin-top:6px"><input type="text" id="newPatConditionOther" placeholder="Type the condition"></div>
+        </div>
       </div>
       <div class="grid2" style="margin-bottom:10px">
         <div><div class="form-label">HbA1c (%)</div><input type="number" id="newPatA1c" placeholder="e.g. 8.2" step="0.1"></div>
         <div><div class="form-label">Weight (kg)</div><input type="number" id="newPatWeight" placeholder="e.g. 72" step="0.1"></div>
-        <div><div class="form-label">Height (cm) — used for BMI-based diet plan</div><input type="number" id="newPatHeight" placeholder="e.g. 165" step="0.1"></div>
+        <div><div class="form-label">Height (cm) — used for BMI-based diet plan</div><input type="number" id="newPatHeight" placeholder="e.g. 165" step="0.1" max="200"></div>
       </div>
       ${sess.role === 'doctor' && db.chws.length > 0 ? `
       <div style="margin-bottom:10px"><div class="form-label">Assign to CHW</div>
@@ -1611,7 +1756,12 @@ function renderAddCHWView(el) {
       </div>
       <div class="grid2" style="margin-bottom:10px">
         <div><div class="form-label">Full Name *</div><input type="text" id="newChwName" placeholder="e.g. Priya Singh"></div>
-        <div><div class="form-label">Phone *</div><input type="text" id="newChwPhone" placeholder="+91-9712345678"></div>
+        <div><div class="form-label">Phone *</div>
+          <div class="flex" style="gap:6px">
+            <span class="btn" style="padding:8px 10px;cursor:default;flex-shrink:0;background:var(--color-background-secondary)">+91</span>
+            <input type="text" id="newChwPhone" placeholder="9712345678" maxlength="10" inputmode="numeric" oninput="sanitizePhoneDigits(this)">
+          </div>
+        </div>
       </div>
       <div style="margin-bottom:10px"><div class="form-label">Coverage Area</div><input type="text" id="newChwArea" placeholder="e.g. Dewas Block, Madhya Pradesh"></div>
       <div style="margin-bottom:16px"><div class="form-label">Login Password</div><input type="password" id="newChwPassword" placeholder="Default: chw123"></div>
@@ -1632,7 +1782,12 @@ function renderAddDieticianView(el) {
       </div>
       <div class="grid2" style="margin-bottom:10px">
         <div><div class="form-label">Full Name *</div><input type="text" id="newDietName" placeholder="e.g. Anjali Rao"></div>
-        <div><div class="form-label">Phone *</div><input type="text" id="newDietPhone" placeholder="+91-9712345678"></div>
+        <div><div class="form-label">Phone *</div>
+          <div class="flex" style="gap:6px">
+            <span class="btn" style="padding:8px 10px;cursor:default;flex-shrink:0;background:var(--color-background-secondary)">+91</span>
+            <input type="text" id="newDietPhone" placeholder="9712345678" maxlength="10" inputmode="numeric" oninput="sanitizePhoneDigits(this)">
+          </div>
+        </div>
       </div>
       <div style="margin-bottom:10px"><div class="form-label">Specialization</div><input type="text" id="newDietSpecialization" placeholder="e.g. Diabetic Nutrition"></div>
       <div style="margin-bottom:16px"><div class="form-label">Login Password</div><input type="password" id="newDietPassword" placeholder="Default: diet123"></div>
@@ -1702,7 +1857,7 @@ async function assignDieticianFromProfile(patientId) {
     alert('Could not assign dietician: ' + e.message);
   } finally {
     state.loading['assignDietician_' + patientId] = false;
-    renderSidebar(); renderContent();
+    renderTabs(); renderSidebar(); renderContent();
   }
 }
 
