@@ -256,9 +256,46 @@ class ClinicVisit(Base):
     # Doctor acceptance of CHW visit request
     doctor_accepted = Column(Boolean, default=False)
     chw_notified_acceptance = Column(Boolean, default=False)
+    duration_minutes = Column(Integer, default=30)
+    # Teleconsultation join info. The doctor/CHW only ever types the Google Meet
+    # code (e.g. "abc-defg-hij") — the full join link is derived from it, and
+    # that's what the patient sees.
+    meeting_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     patient = relationship("Patient", back_populates="clinic_visits")
+
+    @property
+    def meeting_link(self):
+        return f"https://meet.google.com/{self.meeting_id}" if self.meeting_id else None
+
+
+class DoctorSettings(Base):
+    """A doctor's working schedule: hours, lunch window, slot size, working days."""
+    __tablename__ = "doctor_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"), unique=True)
+    working_start = Column(String, default="09:00")
+    working_end = Column(String, default="17:00")
+    lunch_start = Column(String, default="13:00")
+    lunch_end = Column(String, default="14:00")
+    slot_minutes = Column(Integer, default=30)
+    working_days = Column(JSON, default=[0, 1, 2, 3, 4, 5])  # Mon=0 ... Sun=6
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DoctorBreak(Base):
+    """One-off blocked time ranges on a specific date (conference, ward round, etc)."""
+    __tablename__ = "doctor_breaks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    doctor_id = Column(Integer, ForeignKey("doctors.id"))
+    date = Column(String)        # "YYYY-MM-DD"
+    start_time = Column(String)  # "HH:MM"
+    end_time = Column(String)    # "HH:MM"
+    reason = Column(String, default="Blocked")
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class DietPlan(Base):
