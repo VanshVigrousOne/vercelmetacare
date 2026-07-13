@@ -133,6 +133,7 @@ textarea:focus,input:focus,select:focus{border-color:#0F6E56;box-shadow:0 0 0 2p
 .escalation-step{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:0.5px solid var(--color-border-tertiary)}
 .escalation-step:last-child{border-bottom:none}
 .esc-num{width:24px;height:24px;border-radius:50%;background:#0F6E56;color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+.btn-primary.btn-small{padding:5px 10px;font-size:11px}
 .notif-badge{position:relative;display:inline-flex}
 .notif-badge-count{position:absolute;top:-4px;right:-4px;width:16px;height:16px;border-radius:50%;background:#E24B4A;color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center}
 </style>
@@ -204,7 +205,17 @@ let state = {
   role: 'Patient', patientId: null, selectedTask: null, selectedAlert: null,
   selectedPatient: null, addingPatient: false, addingCHW: false, loading: {}, flash: null,
   patientTab: 'overview', providerPatientTab: 'overview', patientSearch: '',
-  dietPlans: {}, visits: {}, testResults: {}, visitRequests: {}, foodLogs: {}, exerciseLogs: {}
+  dietPlans: {}, visits: {}, testResults: {}, visitRequests: {}, foodLogs: {}, exerciseLogs: {},
+  // Calendar / scheduling
+  viewMode: null,                 // null | 'calendar'
+  calendarDate: todayStr(),       // 'YYYY-MM-DD' currently viewed
+  calendarDoctorId: null,         // resolved doctor whose schedule we're viewing
+  calendarDay: null,              // cached CalendarDayOut for calendarDate
+  calSlotBooking: null,           // time string of slot currently being booked, or null
+  calBookPatientId: null,
+  docSettings: null, docBreaks: [],
+  showDoctorSettings: false, showAddBreak: false,
+  followUpFor: null               // visit id currently showing "Schedule Follow-up" form
 };
 
 let db = {
@@ -213,6 +224,43 @@ let db = {
 };
 
 // ── Shared form helpers ──────────────────────────────────────────────────────
+function todayStr() { const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function addDaysToDateStr(dateStr, n) { const d = new Date(dateStr+'T00:00:00'); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function fmtDayLabel(dateStr) {
+  const d = new Date(dateStr+'T00:00:00');
+  if (dateStr === todayStr()) return 'Today';
+  if (dateStr === addDaysToDateStr(todayStr(),1)) return 'Tomorrow';
+  return d.toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short' });
+}
+function generateTimeOptions(selected) {
+  let opts = '';
+  for (let h = 8; h < 19; h++) {
+    for (const m of [0, 30]) {
+      const t = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+      opts += `<option value="${t}" ${t === (selected||'10:00') ? 'selected' : ''}>${t}</option>`;
+    }
+  }
+  return opts;
+}
+function renderVisitFormFields(prefix, defaultDaysAhead) {
+  const defDate = new Date(Date.now() + (defaultDaysAhead||7)*86400000).toISOString().split('T')[0];
+  return `
+    <div class="grid2" style="margin-bottom:8px">
+      <div><div class="form-label">Date</div><input type="date" id="${prefix}Date" value="${defDate}"></div>
+      <div><div class="form-label">Time</div><select id="${prefix}Time">${generateTimeOptions()}</select></div>
+    </div>
+    <div class="grid2" style="margin-bottom:8px">
+      <div><div class="form-label">Visit Type</div><select id="${prefix}Type" onchange="toggleMeetingField('${prefix}')"><option value="Physical Visit">Physical Visit</option><option value="Teleconsultation">Teleconsultation</option></select></div>
+      <div><div class="form-label">Duration</div><select id="${prefix}Duration"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></div>
+    </div>
+    <div id="${prefix}MeetingWrap" style="display:none;margin-bottom:8px"><div class="form-label">Google Meet code</div><input type="text" id="${prefix}MeetingId" placeholder="abc-defg-hij"></div>
+    <input type="text" id="${prefix}Reason" placeholder="Reason for visit" style="margin-bottom:8px">`;
+}
+function toggleMeetingField(prefix) {
+  const t = document.getElementById(prefix + 'Type')?.value;
+  const w = document.getElementById(prefix + 'MeetingWrap');
+  if (w) w.style.display = t === 'Teleconsultation' ? 'block' : 'none';
+}
 function sanitizePhoneDigits(el) { el.value = el.value.replace(/\D/g,'').slice(0,10); }
 function isValidPhoneDigits(v) { return /^\d{10}$/.test(v||''); }
 function calcAgeFromDob(dobStr) {
@@ -414,7 +462,8 @@ async function fetchPatientSpecificData(pId) {
       id: v.id, type: v.visit_type, date: v.visit_date ? v.visit_date.split('T')[0] : '',
       time: v.visit_date && v.visit_date.includes('T') ? v.visit_date.split('T')[1].slice(0,5) : '10:00',
       reason: v.reason, status: v.status, conductedBy: v.scheduled_by_name || v.scheduled_by || 'Care Team',
-      outcome: v.visit_notes, labResults: (v.tests_done||[]).join(', ') || null, nextDate: v.next_visit_date, nextTests: null
+      outcome: v.visit_notes, labResults: (v.tests_done||[]).join(', ') || null, nextDate: v.next_visit_date, nextTests: null,
+      durationMinutes: v.duration_minutes || 30, meetingLink: v.meeting_link || null, doctorAccepted: v.doctor_accepted
     }));
 
     state.dietPlans[pId] = diets[0] ? {
@@ -802,16 +851,25 @@ async function markNotificationsRead() {
   try { await api(`/patients/${state.patientId}/notifications/read`, 'POST'); await fetchAllData(); renderContent(); } catch(e) {}
 }
 
-async function scheduleVisit(patientId, fromProfile=false) {
-  const dateEl = fromProfile ? document.getElementById('pvVisitDate') : document.getElementById('visitDate');
-  const typeEl = fromProfile ? document.getElementById('pvVisitType') : document.getElementById('visitType');
-  const reasonEl = fromProfile ? document.getElementById('pvVisitReason') : document.getElementById('visitReason');
+async function scheduleVisit(patientId, fromProfile=false, prefix) {
+  prefix = prefix || (fromProfile ? 'pv_' : 'v_');
+  const dateEl = document.getElementById(prefix+'Date');
+  const timeEl = document.getElementById(prefix+'Time');
+  const typeEl = document.getElementById(prefix+'Type');
+  const durEl = document.getElementById(prefix+'Duration');
+  const meetingEl = document.getElementById(prefix+'MeetingId');
+  const reasonEl = document.getElementById(prefix+'Reason');
   if (!dateEl?.value) { alert('Please select a date.'); return; }
+  const [hh,mm] = (timeEl?.value || '10:00').split(':');
+  const dt = new Date(dateEl.value + 'T00:00:00'); dt.setHours(parseInt(hh), parseInt(mm), 0, 0);
+  const visitType = typeEl?.value || 'Physical Visit';
 
   try {
     await api('/visits', 'POST', {
-      patient_id: patientId, visit_type: typeEl?.value || 'Mandatory',
-      visit_date: new Date(dateEl.value).toISOString(), reason: reasonEl?.value || ''
+      patient_id: patientId, visit_type: visitType,
+      visit_date: dt.toISOString(), reason: reasonEl?.value || '',
+      duration_minutes: parseInt(durEl?.value || '30'),
+      meeting_id: visitType === 'Teleconsultation' ? (meetingEl?.value?.trim() || null) : null
     });
     await refreshPatientData(patientId);
     state.providerPatientTab = 'visits';
@@ -819,10 +877,10 @@ async function scheduleVisit(patientId, fromProfile=false) {
   } catch(e) { alert('Failed to schedule visit: ' + e.message); }
 }
 
-function scheduleVisitFromProfile(patientId) { scheduleVisit(patientId, true); }
+function scheduleVisitFromProfile(patientId) { scheduleVisit(patientId, true, 'pv_'); }
 
 async function requestDoctorVisit(patientId) {
-  const reason = document.getElementById('visitReason')?.value?.trim() || 'Follow-up required';
+  const reason = document.getElementById('v_Reason')?.value?.trim() || 'Follow-up required';
   try {
     await api(`/patients/${patientId}/request-visit`, 'POST', { reason: reason, visit_type: 'Impromptu' });
     await fetchAllData();
@@ -832,7 +890,7 @@ async function requestDoctorVisit(patientId) {
 }
 
 function requestDoctorVisitFromProfile(patientId) {
-  const reason = document.getElementById('pvVisitReason')?.value?.trim() || 'Follow-up required';
+  const reason = document.getElementById('pv_Reason')?.value?.trim() || 'Follow-up required';
   api(`/patients/${patientId}/request-visit`, 'POST', { reason: reason, visit_type: 'Impromptu' })
     .then(() => { fetchAllData().then(() => { renderTabs(); renderSidebar(); renderContent(); }); });
 }
@@ -851,11 +909,19 @@ async function patientRequestVisit(patientId) {
 
 async function doctorAcceptCase(patientId, alertId) {
   const date = document.getElementById('docVisitDate')?.value;
+  const time = document.getElementById('docVisitTime')?.value || '10:00';
+  const duration = parseInt(document.getElementById('docVisitDuration')?.value || '30');
+  const meetingId = document.getElementById('docVisitMeetingId')?.value?.trim();
   const tests = document.getElementById('docVisitTests')?.value?.trim() || '';
   if (!date) { alert("Select a date"); return; }
+  const [hh,mm] = time.split(':');
+  const dt = new Date(date + 'T00:00:00'); dt.setHours(parseInt(hh), parseInt(mm), 0, 0);
   state.loading['accept_'+alertId] = true; renderContent();
   try {
-    await api(`/alerts/${alertId}/accept-visit`, 'POST', { visit_date: new Date(date).toISOString(), notes: tests });
+    await api(`/alerts/${alertId}/accept-visit`, 'POST', {
+      visit_date: dt.toISOString(), notes: tests, duration_minutes: duration,
+      meeting_id: meetingId || null
+    });
     await fetchAllData();
     state.selectedAlert = null; state.selectedPatient = patientId; state.providerPatientTab = 'visits';
   } catch(e) { alert('Failed: ' + e.message); }
@@ -1245,7 +1311,7 @@ function openAlertsBell() {
   renderTabs(); renderSidebar(); renderContent();
 }
 
-function switchRole(r) { state.role=r; state.selectedTask=null; state.selectedAlert=null; state.selectedPatient=null; state.addingPatient=false; state.addingCHW=false; state.addingDietician=false; renderTabs(); renderSidebar(); renderContent(); }
+function switchRole(r) { state.role=r; state.selectedTask=null; state.selectedAlert=null; state.selectedPatient=null; state.addingPatient=false; state.addingCHW=false; state.addingDietician=false; state.viewMode=null; renderTabs(); renderSidebar(); renderContent(); }
 
 function renderSidebar() {
   const sb = document.getElementById('sidebar');
@@ -1283,6 +1349,8 @@ function renderSidebar() {
         <div class="sidebar-label">CHW Profile</div>
         <div style="padding:8px 10px"><div class="flex"><div class="avatar av-coral" style="font-size:11px">${initials(sess.name)}</div><div><div class="name-line">${sess.name}</div><div class="sub-line">Community Health Worker</div></div></div></div>
       </div>
+      <div class="patient-item ${state.viewMode==='calendar'?'active':''}" onclick="openCalendarView()"><span style="font-size:13px">📅 Calendar</span></div>
+      <hr class="sep">
       <div class="flex-between" style="margin:0 4px 8px 4px"><div class="sidebar-label" style="margin:0">Patients (${db.patients.length})</div><button class="btn btn-small" onclick="showAddPatient()">+ New</button></div>
       ${db.patients.filter(matchesSearch).map(p => {
         const pt = db.tasks.filter(t=>t.patient_id===p.id&&t.status==='Pending');
@@ -1324,6 +1392,8 @@ function renderSidebar() {
         <div class="sidebar-label">Doctor Profile</div>
         <div style="padding:8px 10px"><div class="flex"><div class="avatar av-blue" style="font-size:11px">${initials(sess.name)}</div><div><div class="name-line">${sess.name}</div><div class="sub-line">Diabetologist</div></div></div></div>
       </div>
+      <div class="patient-item ${state.viewMode==='calendar'?'active':''}" onclick="openCalendarView()"><span style="font-size:13px">📅 Calendar</span></div>
+      <hr class="sep">
       <div class="flex-between" style="margin:0 4px 8px 4px">
         <div class="sidebar-label" style="margin:0">Care Team</div>
         <div style="display:flex;gap:4px"><button class="btn btn-small" onclick="showAddCHW()">+ CHW</button><button class="btn btn-small" onclick="showAddDietician()">+ Diet</button><button class="btn btn-small" onclick="showAddPatient()">+ Pat</button></div>
@@ -1356,10 +1426,237 @@ function renderContent() {
   if (state.addingPatient) { renderAddPatientView(el); return; }
   if (state.addingCHW) { renderAddCHWView(el); return; }
   if (state.addingDietician) { renderAddDieticianView(el); return; }
+  if (state.selectedPatient || state.selectedTask || state.selectedAlert) state.viewMode = null;
+  if (state.viewMode === 'calendar' && (state.role === 'CHW' || state.role === 'Doctor')) { renderCalendarView(el); return; }
   if (state.role === 'Patient') renderPatientView(el);
   else if (state.role === 'CHW') renderCHWView(el);
   else if (state.role === 'Dietician') renderDieticianView(el);
   else renderDoctorView(el);
+}
+
+// ── Calendar (doctor working schedule: available / booked / lunch / blocked) ──
+
+function openCalendarView() {
+  state.selectedPatient = null; state.selectedTask = null; state.selectedAlert = null;
+  state.viewMode = 'calendar'; state.calSlotBooking = null;
+  renderSidebar(); renderContent();
+  loadCalendarDay(state.calendarDate);
+}
+
+async function loadCalendarDay(dateStr) {
+  state.calendarDate = dateStr;
+  state.loading.calendar = true; renderCalendarView(document.getElementById('content'));
+  try {
+    const sess = getSession();
+    let url = `/calendar/${dateStr}`;
+    // CHWs implicitly resolve to their supervising doctor server-side; doctors to themselves.
+    state.calendarDay = await api(url);
+    if (sess.role === 'doctor' && !state.docSettings) {
+      try { state.docSettings = await api('/doctors/me/settings'); } catch(e) {}
+    }
+  } catch(e) {
+    state.calendarDay = null;
+    console.error('Failed to load calendar', e);
+  }
+  state.loading.calendar = false;
+  renderCalendarView(document.getElementById('content'));
+}
+
+function goToCalendarDate(dateStr) { state.calSlotBooking = null; loadCalendarDay(dateStr); }
+function shiftCalendarDate(n) { goToCalendarDate(addDaysToDateStr(state.calendarDate, n)); }
+
+function slotStatusMeta(status) {
+  return {
+    available: { label: 'Available', color: '#0F6E56', bg: '#E1F5EE' },
+    booked:    { label: 'Booked',    color: '#0C447C', bg: '#E6F1FB' },
+    lunch:     { label: 'Lunch',     color: '#854F0B', bg: '#FAEEDA' },
+    blocked:   { label: 'Blocked',   color: '#791F1F', bg: '#FCEBEB' },
+    closed:    { label: 'Closed',    color: '#999',    bg: '#F1EFE8' },
+  }[status] || { label: status, color: '#666', bg: '#f1efe8' };
+}
+
+function renderCalendarView(el) {
+  const sess = getSession();
+  const isDoctor = sess.role === 'doctor';
+  const day = state.calendarDay;
+  const quickDates = [0,1,7,15,30].map(n => addDaysToDateStr(todayStr(), n));
+
+  el.innerHTML = `
+    <div class="card">
+      <div class="flex-between" style="margin-bottom:.75rem">
+        <div class="card-title" style="margin:0">📅 Calendar${day?` — ${new Date(state.calendarDate+'T00:00:00').toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}`:''}</div>
+        ${isDoctor ? `<div class="flex" style="gap:6px">
+          <button class="btn btn-small" onclick="state.showAddBreak=true;state.showDoctorSettings=false;renderContent()">🚫 Block time</button>
+          <button class="btn btn-small" onclick="state.showDoctorSettings=true;state.showAddBreak=false;renderContent()">⚙ Working hours</button>
+        </div>` : ''}
+      </div>
+      <div class="flex" style="gap:6px;margin-bottom:.75rem;flex-wrap:wrap;align-items:center">
+        <button class="btn btn-small" onclick="shiftCalendarDate(-1)">← Prev</button>
+        ${quickDates.map(d => `<button class="btn btn-small ${state.calendarDate===d?'btn-primary':''}" onclick="goToCalendarDate('${d}')">${fmtDayLabel(d)}</button>`).join('')}
+        <button class="btn btn-small" onclick="shiftCalendarDate(1)">Next →</button>
+        <input type="date" value="${state.calendarDate}" onchange="goToCalendarDate(this.value)" style="width:auto;padding:6px 8px;font-size:12px">
+      </div>
+      ${state.showDoctorSettings ? renderDoctorSettingsPanel() : ''}
+      ${state.showAddBreak ? renderAddBreakPanel() : ''}
+    </div>
+    <div class="card">
+      ${state.loading.calendar ? `<div class="muted"><span class="spinner"></span> Loading schedule…</div>` :
+        !day ? `<div class="muted">Could not load the calendar for this date.</div>` :
+        day.slots.length === 0 ? `<div class="muted">Doctor is not working on this day.</div>` :
+        renderSlotGrid(day)
+      }
+    </div>
+    ${state.calSlotBooking ? renderSlotBookingPanel() : ''}
+  `;
+}
+
+function renderSlotGrid(day) {
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">
+    ${day.slots.map(s => {
+      const meta = slotStatusMeta(s.status);
+      const clickable = s.status === 'available';
+      const canOpenPatient = s.status === 'booked' && s.patient_id && db.patients.some(p => p.id === s.patient_id);
+      return `<div style="border-radius:8px;padding:8px 10px;background:${meta.bg};border:${clickable?'1px dashed':'0.5px solid'} ${meta.color}22;cursor:${clickable||canOpenPatient?'pointer':'default'}"
+        onclick="${clickable ? `openSlotBooking('${s.time}')` : (canOpenPatient ? `state.viewMode=null;state.selectedPatient=${s.patient_id};state.providerPatientTab='visits';renderSidebar();renderContent()` : '')}">
+        <div class="flex-between"><span style="font-size:13px;font-weight:600;color:${meta.color}">${s.time}</span><span class="badge" style="background:transparent;color:${meta.color};padding:0;font-size:10px">${meta.label}</span></div>
+        <div style="font-size:11px;color:${meta.color};margin-top:2px">${s.label || (clickable ? 'Tap to book' : '')}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function openSlotBooking(time) { state.calSlotBooking = time; state.calBookPatientId = null; renderContent(); }
+function closeSlotBooking() { state.calSlotBooking = null; renderContent(); }
+
+function renderSlotBookingPanel() {
+  const time = state.calSlotBooking;
+  return `<div class="card" style="border-color:#0F6E56">
+    <div class="card-title">📌 Book ${time} on ${fmtDayLabel(state.calendarDate)}</div>
+    <div class="grid2" style="margin-bottom:8px">
+      <div>
+        <div class="form-label">Patient</div>
+        <select id="calBookPatient">
+          <option value="">Select patient…</option>
+          ${db.patients.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <div class="form-label">Duration</div>
+        <select id="calBookDuration"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">60 min</option></select>
+      </div>
+    </div>
+    <div class="grid2" style="margin-bottom:8px">
+      <div>
+        <div class="form-label">Visit Type</div>
+        <select id="calBookType" onchange="toggleMeetingField('calBook')">
+          <option value="Physical Visit">Physical Visit</option>
+          <option value="Teleconsultation">Teleconsultation</option>
+        </select>
+      </div>
+      <div id="calBookMeetingWrap" style="display:none">
+        <div class="form-label">Google Meet code</div>
+        <input type="text" id="calBookMeetingId" placeholder="abc-defg-hij">
+      </div>
+    </div>
+    <input type="text" id="calBookReason" placeholder="Reason for visit" style="margin-bottom:8px">
+    <div class="flex" style="gap:8px">
+      <button class="btn btn-primary" onclick="confirmSlotBooking()" style="flex:1">${state.loading.calBook?'<span class="spinner"></span>Booking...':'✓ Confirm booking'}</button>
+      <button class="btn" onclick="closeSlotBooking()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+async function confirmSlotBooking() {
+  const patientId = parseInt(document.getElementById('calBookPatient')?.value);
+  const duration = parseInt(document.getElementById('calBookDuration')?.value || '30');
+  const visitType = document.getElementById('calBookType')?.value || 'Physical Visit';
+  const meetingId = document.getElementById('calBookMeetingId')?.value?.trim();
+  const reason = document.getElementById('calBookReason')?.value?.trim();
+  if (!patientId) { alert('Please select a patient.'); return; }
+  const [hh,mm] = state.calSlotBooking.split(':');
+  const dt = new Date(state.calendarDate+'T00:00:00'); dt.setHours(parseInt(hh), parseInt(mm), 0, 0);
+  state.loading.calBook = true; renderContent();
+  try {
+    await api('/visits', 'POST', {
+      patient_id: patientId, visit_type: visitType, visit_date: dt.toISOString(),
+      reason: reason || '', duration_minutes: duration,
+      meeting_id: visitType === 'Teleconsultation' ? (meetingId || null) : null
+    });
+    state.calSlotBooking = null;
+    await refreshPatientData(patientId);
+    await loadCalendarDay(state.calendarDate);
+  } catch(e) { alert('Could not book this slot: ' + e.message); }
+  state.loading.calBook = false;
+  renderContent();
+}
+
+function renderDoctorSettingsPanel() {
+  const s = state.docSettings || { working_start:'09:00', working_end:'17:00', lunch_start:'13:00', lunch_end:'14:00', slot_minutes:30, working_days:[0,1,2,3,4,5] };
+  const dayLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  return `<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:.75rem">
+    <div class="form-label" style="margin-bottom:8px">Working Hours</div>
+    <div class="grid4" style="margin-bottom:8px">
+      <div><div class="form-label">Start</div><input type="text" id="dsStart" value="${s.working_start}" placeholder="09:00"></div>
+      <div><div class="form-label">End</div><input type="text" id="dsEnd" value="${s.working_end}" placeholder="17:00"></div>
+      <div><div class="form-label">Lunch start</div><input type="text" id="dsLunchStart" value="${s.lunch_start}" placeholder="13:00"></div>
+      <div><div class="form-label">Lunch end</div><input type="text" id="dsLunchEnd" value="${s.lunch_end}" placeholder="14:00"></div>
+    </div>
+    <div class="grid2" style="margin-bottom:8px">
+      <div><div class="form-label">Slot size (min)</div><select id="dsSlot"><option value="15" ${s.slot_minutes==15?'selected':''}>15</option><option value="30" ${s.slot_minutes==30?'selected':''}>30</option><option value="60" ${s.slot_minutes==60?'selected':''}>60</option></select></div>
+      <div><div class="form-label">Working days</div>
+        <div class="flex" style="gap:4px;flex-wrap:wrap">
+          ${dayLabels.map((l,i)=>`<label style="font-size:11px;display:flex;gap:3px;align-items:center"><input type="checkbox" class="dsDay" value="${i}" ${s.working_days.includes(i)?'checked':''} style="width:auto">${l}</label>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="flex" style="gap:8px">
+      <button class="btn btn-primary" onclick="saveDoctorSettings()">Save</button>
+      <button class="btn" onclick="state.showDoctorSettings=false;renderContent()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+async function saveDoctorSettings() {
+  const workingDays = Array.from(document.querySelectorAll('.dsDay:checked')).map(el=>parseInt(el.value));
+  try {
+    state.docSettings = await api('/doctors/me/settings', 'PUT', {
+      working_start: document.getElementById('dsStart').value,
+      working_end: document.getElementById('dsEnd').value,
+      lunch_start: document.getElementById('dsLunchStart').value,
+      lunch_end: document.getElementById('dsLunchEnd').value,
+      slot_minutes: parseInt(document.getElementById('dsSlot').value),
+      working_days: workingDays
+    });
+    state.showDoctorSettings = false;
+    await loadCalendarDay(state.calendarDate);
+  } catch(e) { alert('Failed to save: ' + e.message); }
+}
+
+function renderAddBreakPanel() {
+  return `<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:.75rem">
+    <div class="form-label" style="margin-bottom:8px">Block Time on ${fmtDayLabel(state.calendarDate)}</div>
+    <div class="grid3" style="margin-bottom:8px">
+      <div><div class="form-label">Start</div><input type="text" id="brkStart" placeholder="15:00"></div>
+      <div><div class="form-label">End</div><input type="text" id="brkEnd" placeholder="16:00"></div>
+      <div><div class="form-label">Reason</div><select id="brkReason"><option>Conference</option><option>Emergency</option><option>Ward Round</option><option>Personal</option><option>Custom</option></select></div>
+    </div>
+    <div class="flex" style="gap:8px">
+      <button class="btn btn-primary" onclick="saveDoctorBreak()">Block</button>
+      <button class="btn" onclick="state.showAddBreak=false;renderContent()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+async function saveDoctorBreak() {
+  const start = document.getElementById('brkStart')?.value?.trim();
+  const end = document.getElementById('brkEnd')?.value?.trim();
+  const reason = document.getElementById('brkReason')?.value || 'Blocked';
+  if (!start || !end) { alert('Enter start and end time (HH:MM)'); return; }
+  try {
+    await api('/doctors/me/breaks', 'POST', { date: state.calendarDate, start_time: start, end_time: end, reason });
+    state.showAddBreak = false;
+    await loadCalendarDay(state.calendarDate);
+  } catch(e) { alert('Failed: ' + e.message); }
 }
 
 // ── Patient Rendering ────────────────────────────────────────────────────────
@@ -1448,7 +1745,7 @@ function renderPatientOverviewTab(patient, logs, rx, unread) {
       </div>
     </div>
     ${rx?`<div class="card"><div class="card-title">💊 Current Prescription</div><div style="font-size:15px;font-weight:500;margin-bottom:4px">${rx.medication_name}</div><div class="muted">${rx.dosage}</div>${rx.instructions?`<div class="muted" style="margin-top:4px">${rx.instructions}</div>`:''}</div>`:''}
-    ${upcomingVisits.length>0?`<div class="card"><div class="card-title">🏥 Upcoming Visit</div><div class="visit-card upcoming"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${upcomingVisits[0].type}</span><span class="badge b-green">Scheduled</span></div><div class="muted">📅 ${fmtDate(upcomingVisits[0].date)} at ${upcomingVisits[0].time}</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${upcomingVisits[0].conductedBy}</div><div class="muted" style="margin-top:4px">Reason: ${upcomingVisits[0].reason}</div>${upcomingVisits[0].nextTests?`<div style="margin-top:6px"><span class="badge b-blue">Tests required: ${upcomingVisits[0].nextTests}</span></div>`:''}</div></div>`:''}
+    ${upcomingVisits.length>0?`<div class="card"><div class="card-title">🏥 Upcoming Visit</div><div class="visit-card upcoming"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${upcomingVisits[0].type}</span><span class="badge b-green">Scheduled</span></div><div class="muted">📅 ${fmtDate(upcomingVisits[0].date)} at ${upcomingVisits[0].time} · ${upcomingVisits[0].durationMinutes||30} min</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${upcomingVisits[0].conductedBy}</div><div class="muted" style="margin-top:4px">Reason: ${upcomingVisits[0].reason}</div>${upcomingVisits[0].meetingLink?`<a href="${upcomingVisits[0].meetingLink}" target="_blank" class="btn btn-primary btn-small" style="margin-top:8px;display:inline-block;text-decoration:none">🎥 Join video call</a>`:''}${upcomingVisits[0].nextTests?`<div style="margin-top:6px"><span class="badge b-blue">Tests required: ${upcomingVisits[0].nextTests}</span></div>`:''}</div></div>`:''}
     ${diet?`<div class="card"><div class="card-title">🥗 Today's Diet Reminder</div><div style="font-size:13px;color:#085041;background:#E1F5EE;border-radius:8px;padding:10px;line-height:1.7"><b>Breakfast:</b> ${(diet.breakfast||[]).join(' · ')}<br><b>Snacks:</b> ${(diet.snacks||[]).slice(0,1).join(' · ')}<br><b style="color:#A32D2D">Avoid:</b> ${(diet.avoid||[]).slice(0,2).join(', ')}</div><button class="btn btn-small" style="margin-top:8px" onclick="state.patientTab='diet';renderContent()">View full diet plan →</button></div>`:''}`;
 }
 
@@ -1529,7 +1826,7 @@ function renderPatientVisitsTab(patient) {
   const visits = (state.visits[patient.id]||[]).sort((a,b)=>new Date(b.date)-new Date(a.date));
   const upcoming = visits.filter(v=>v.status==='Upcoming' || v.status === 'Scheduled');
   const past = visits.filter(v=>v.status==='Completed');
-  return `<div class="card"><div class="card-title">🏥 Visits</div>${upcoming.length>0?`<div class="form-label" style="margin-bottom:8px;color:#0F6E56">UPCOMING</div>${upcoming.map(v=>`<div class="visit-card upcoming"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-green">Scheduled</span></div><div class="muted">📅 ${fmtDate(v.date)} at ${v.time}</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${v.conductedBy}</div><div class="muted" style="margin-top:4px">Reason: ${v.reason}</div>${v.nextTests?`<div style="margin-top:6px"><span class="badge b-blue">🧪 Tests: ${v.nextTests}</span></div>`:''}</div>`).join('')}`:''}${past.length>0?`<hr class="sep"><div class="form-label" style="margin-bottom:8px">PAST VISITS</div>${past.map(v=>`<div class="visit-card completed"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-blue">Completed</span></div><div class="muted">📅 ${fmtDate(v.date)}</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${v.conductedBy}</div>${v.outcome?`<div class="ai-block" style="margin-top:8px;font-size:12px"><b>Outcome:</b> ${v.outcome}</div>`:''}${v.labResults?`<div style="margin-top:4px"><span class="badge b-gray">🧪 ${v.labResults}</span></div>`:''}</div>`).join('')}`:''}${visits.length===0?`<div class="muted">No visits recorded yet.</div>`:''}</div>`;
+  return `<div class="card"><div class="card-title">🏥 Visits</div>${upcoming.length>0?`<div class="form-label" style="margin-bottom:8px;color:#0F6E56">UPCOMING</div>${upcoming.map(v=>`<div class="visit-card upcoming"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-green">Scheduled</span></div><div class="muted">📅 ${fmtDate(v.date)} at ${v.time} · ${v.durationMinutes||30} min</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${v.conductedBy}</div><div class="muted" style="margin-top:4px">Reason: ${v.reason}</div>${v.meetingLink?`<a href="${v.meetingLink}" target="_blank" class="btn btn-primary btn-small" style="margin-top:8px;display:inline-block;text-decoration:none">🎥 Join video call</a>`:''}${v.nextTests?`<div style="margin-top:6px"><span class="badge b-blue">🧪 Tests: ${v.nextTests}</span></div>`:''}</div>`).join('')}`:''}${past.length>0?`<hr class="sep"><div class="form-label" style="margin-bottom:8px">PAST VISITS</div>${past.map(v=>`<div class="visit-card completed"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-blue">Completed</span></div><div class="muted">📅 ${fmtDate(v.date)}</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${v.conductedBy}</div>${v.outcome?`<div class="ai-block" style="margin-top:8px;font-size:12px"><b>Outcome:</b> ${v.outcome}</div>`:''}${v.labResults?`<div style="margin-top:4px"><span class="badge b-gray">🧪 ${v.labResults}</span></div>`:''}</div>`).join('')}`:''}${visits.length===0?`<div class="muted">No visits recorded yet.</div>`:''}</div>`;
 }
 
 function renderPatientTestsTab(patient) {
@@ -1644,7 +1941,8 @@ function renderTaskDetail(t) {
       ${t.chw_validated?`<div class="chw-label">✓ CHW validated note</div><div class="chw-block">${t.chw_validated_note}</div>`:`<div class="form-label">Your validation note (after calling patient)</div><textarea id="chwNote" rows="3" placeholder="e.g. Called patient. Confirmed trembling…" style="margin-bottom:8px"></textarea><button class="btn btn-primary" onclick="validateTask(${t.id})" style="margin-bottom:.75rem">${state.loading['validate_'+t.id]?'<span class="spinner"></span>Saving...':'✓ Save validation'}</button>`}
       <hr class="sep">
       <div class="form-label" style="color:#0F6E56">Schedule / Request Visit</div>
-      <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Visit Date</div><input type="date" id="visitDate" value="${new Date(Date.now()+7*86400000).toISOString().split('T')[0]}"></div><div><div class="form-label">Visit Type</div><select id="visitType"><option>CHW Home Visit</option><option>Clinic Visit</option><option>Emergency Visit</option></select></div></div><input type="text" id="visitReason" placeholder="Reason (e.g. sugar control, medication review)" style="margin-bottom:8px"><div class="flex" style="gap:8px;margin-bottom:.75rem"><button class="btn btn-blue" onclick="scheduleVisit(${t.patient_id},false)" style="flex:1">📅 Schedule CHW Visit</button><button class="btn btn-amber" onclick="requestDoctorVisit(${t.patient_id})" style="flex:1">⬆ Request Doctor Appointment</button></div>
+      ${renderVisitFormFields('v_')}
+      <div class="flex" style="gap:8px;margin-bottom:.75rem"><button class="btn btn-blue" onclick="scheduleVisit(${t.patient_id},false,'v_')" style="flex:1">📅 Schedule Visit</button><button class="btn btn-amber" onclick="requestDoctorVisit(${t.patient_id})" style="flex:1">⬆ Request Doctor Appointment</button></div>
       <hr class="sep"><div class="form-label">Send message to patient</div><textarea id="notifMsg" rows="2" placeholder="e.g. Ramesh ji, please check sugar…" style="margin-bottom:8px"></textarea><button class="btn" onclick="sendNotification(${t.patient_id})" style="margin-bottom:.75rem">${state.loading['notif_'+t.patient_id]?'<span class="spinner"></span>Sending...':'📲 Send message to patient'}</button>
       <hr class="sep"><div class="form-label">Suggest prescription to doctor</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Medication</div><input type="text" id="rxMed" placeholder="e.g. Glipizide 5mg"></div><div><div class="form-label">Dosage</div><input type="text" id="rxDose" placeholder="e.g. Once daily"></div></div><button class="btn btn-amber" onclick="suggestPrescription(${t.patient_id})" style="margin-bottom:.75rem">${state.loading['rx_'+t.patient_id]?'<span class="spinner"></span>Sending...':'💊 Suggest prescription to doctor ↗'}</button>
       <hr class="sep"><div class="flex" style="gap:8px;margin-top:4px"><button class="btn" style="flex:1" onclick="resolveTask(${t.id})">✓ Mark resolved</button><button class="btn btn-danger" style="flex:1" onclick="escalateTask(${t.id})">🚨 Escalate to doctor</button></div>
@@ -1661,7 +1959,10 @@ function renderAlertDetail(a) {
       ${task&&task.raw_patient_text?`<div class="form-label" style="margin-bottom:4px">Patient's own words</div><div class="quote-block">"${task.raw_patient_text}"</div>`:''}${task&&task.chw_validated_note?`<div class="chw-label">CHW validated note</div><div class="chw-block">${task.chw_validated_note}</div>`:''}
       <div class="ai-label"><span>🤖</span> AI clinical context</div><div class="ai-block">${a.doctor_context||'No AI context.'}</div>
       <hr class="sep"><div class="card-title">Blood sugar trend</div><div class="chart-bar-wrap">${logs.slice(0,7).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*72):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>
-      <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Accept Case & Schedule Clinic Visit</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Appointment Date</div><input type="date" id="docVisitDate" value="${new Date(Date.now()+3*86400000).toISOString().split('T')[0]}"></div><div><div class="form-label">Time</div><input type="text" id="docVisitTime" placeholder="e.g. 10:00 AM" value="10:00 AM"></div></div><input type="text" id="docVisitTests" placeholder="Tests to order (e.g. HbA1c, Kidney function)" style="margin-bottom:8px"><button class="btn btn-primary" onclick="doctorAcceptCase(${a.patient_id},${a.id})" style="margin-bottom:.75rem;width:100%">${state.loading['accept_'+a.id]?'<span class="spinner"></span>Scheduling...':'✓ Accept case + schedule appointment (notifies patient & CHW)'}</button>
+      <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Accept Case & Schedule Clinic Visit</div>
+      <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Appointment Date</div><input type="date" id="docVisitDate" value="${new Date(Date.now()+3*86400000).toISOString().split('T')[0]}"></div><div><div class="form-label">Time</div><select id="docVisitTime">${generateTimeOptions()}</select></div></div>
+      <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Duration</div><select id="docVisitDuration"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></div><div><div class="form-label">Google Meet code (if teleconsult)</div><input type="text" id="docVisitMeetingId" placeholder="abc-defg-hij"></div></div>
+      <input type="text" id="docVisitTests" placeholder="Tests to order (e.g. HbA1c, Kidney function)" style="margin-bottom:8px"><button class="btn btn-primary" onclick="doctorAcceptCase(${a.patient_id},${a.id})" style="margin-bottom:.75rem;width:100%">${state.loading['accept_'+a.id]?'<span class="spinner"></span>Scheduling...':'✓ Accept case + schedule appointment (notifies patient & CHW)'}</button>
       <hr class="sep"><div class="form-label">Issue / update prescription</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Medication</div><input type="text" id="docRxMed" placeholder="e.g. Metformin 1000mg" value="${rx?rx.medication_name:''}"></div><div><div class="form-label">Dosage</div><input type="text" id="docRxDose" placeholder="e.g. Twice daily" value="${rx?rx.dosage:''}"></div></div><input type="text" id="docRxInstr" placeholder="Additional instructions..." value="${rx&&rx.instructions?rx.instructions:''}" style="margin-bottom:8px"><button class="btn btn-primary" onclick="issuePrescription(${a.patient_id})" style="margin-bottom:.75rem">${state.loading['docRx_'+a.patient_id]?'<span class="spinner"></span>Issuing...':'💊 Issue prescription → notifies patient + CHW'}</button>
       <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Set / Update Diet Plan</div><textarea id="dietBreakfast" rows="2" placeholder="Breakfast items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.breakfast||[]).join(', ')}</textarea><textarea id="dietLunch" rows="2" placeholder="Lunch items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.lunch||[]).join(', ')}</textarea><textarea id="dietDinner" rows="2" placeholder="Dinner items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.dinner||[]).join(', ')}</textarea><textarea id="dietAvoid" rows="1" placeholder="Foods to avoid (comma separated)..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.avoid||[]).join(', ')}</textarea><textarea id="dietNotes" rows="1" placeholder="General diet notes..." style="margin-bottom:8px">${state.dietPlans[a.patient_id]?.notes||''}</textarea><button class="btn btn-blue" onclick="saveDietPlan(${a.patient_id})" style="margin-bottom:.75rem">🥗 Save diet plan → notifies patient</button>${state['dietSaved_'+a.patient_id]?`<div class="success-banner" style="margin-bottom:.75rem">✓ Diet plan saved and patient notified!</div>`:''}
       <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Order Tests</div><input type="text" id="testOrder" placeholder="e.g. HbA1c, Creatinine, Lipid Profile" style="margin-bottom:6px"><input type="date" id="testDueDate" value="${new Date(Date.now()+7*86400000).toISOString().split('T')[0]}" style="margin-bottom:8px"><button class="btn btn-blue" onclick="orderTests(${a.patient_id})" style="margin-bottom:.75rem">🧪 Order tests → notifies patient & CHW</button>
@@ -1880,14 +2181,49 @@ function renderProviderVisitsTab(p, sess) {
   return `
     ${vReqs.filter(r=>r.status!=='Completed').length>0?`<div class="info-banner" style="margin-bottom:12px"><span>📋</span><span>Visit request pending response</span></div>`:''}
     <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px">
-      <div class="form-label" style="color:#0F6E56;margin-bottom:8px">${sess.role==='doctor'?'Schedule Clinic Visit':'Schedule / Request Visit'}</div>
-      <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Date</div><input type="date" id="pvVisitDate" value="${new Date(Date.now()+7*86400000).toISOString().split('T')[0]}"></div><div><div class="form-label">Type</div><select id="pvVisitType">${sess.role==='doctor'?'<option>Clinic Visit</option><option>Teleconsult</option>':'<option>CHW Home Visit</option><option>Clinic Visit</option>'}</select></div></div>
-      <input type="text" id="pvVisitReason" placeholder="Reason for visit" style="margin-bottom:8px"><input type="text" id="pvVisitTests" placeholder="Tests to order at visit (optional)" style="margin-bottom:8px">
-      <div class="flex" style="gap:8px"><button class="btn btn-primary" onclick="scheduleVisitFromProfile(${p.id})" style="flex:1">📅 ${sess.role==='doctor'?'Schedule & notify patient+CHW':'Schedule CHW Visit'}</button>${sess.role==='chw'?`<button class="btn btn-amber" onclick="requestDoctorVisitFromProfile(${p.id})" style="flex:1">⬆ Request Doctor Visit</button>`:''}</div>
+      <div class="form-label" style="color:#0F6E56;margin-bottom:8px">+ New Visit</div>
+      ${renderVisitFormFields('pv_')}
+      <div class="flex" style="gap:8px"><button class="btn btn-primary" onclick="scheduleVisitFromProfile(${p.id})" style="flex:1">📅 ${sess.role==='doctor'?'Schedule & notify patient+CHW':'Schedule visit'}</button>${sess.role==='chw'?`<button class="btn btn-amber" onclick="requestDoctorVisitFromProfile(${p.id})" style="flex:1">⬆ Request Doctor Visit</button>`:''}</div>
     </div>
-    ${upcoming.length>0?`<div class="form-label" style="margin-bottom:8px;color:#0F6E56">UPCOMING</div>${upcoming.map(v=>`<div class="visit-card upcoming" style="margin-bottom:8px"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-green">Scheduled</span></div><div class="muted">📅 ${fmtDate(v.date)} at ${v.time}</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${v.conductedBy}</div><div class="muted">Reason: ${v.reason}</div>${v.nextTests?`<div style="margin-top:4px"><span class="badge b-blue">🧪 ${v.nextTests}</span></div>`:''}<button class="btn btn-small btn-primary" style="margin-top:8px" onclick="recordVisitOutcome('${v.id}',${p.id})">Record outcome</button></div>`).join('')}`:''}
-    ${past.length>0?`<hr class="sep"><div class="form-label" style="margin-bottom:8px">PAST VISITS</div>${past.map(v=>`<div class="visit-card completed" style="margin-bottom:8px"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-blue">Completed · ${fmtDate(v.date)}</span></div><div class="muted">👨‍⚕️ ${v.conductedBy}</div>${v.outcome?`<div class="ai-block" style="margin-top:8px;font-size:12px"><b>Outcome:</b> ${v.outcome}</div>`:''}${v.labResults?`<div style="margin-top:4px"><span class="badge b-gray">🧪 ${v.labResults}</span></div>`:''}${v.nextDate?`<div class="muted" style="margin-top:4px">Next visit: ${fmtDate(v.nextDate)}</div>`:''}</div>`).join('')}`:''}
+    ${upcoming.length>0?`<div class="form-label" style="margin-bottom:8px;color:#0F6E56">UPCOMING</div>${upcoming.map(v=>`<div class="visit-card upcoming" style="margin-bottom:8px"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-green">Scheduled</span></div><div class="muted">📅 ${fmtDate(v.date)} at ${v.time} · ${v.durationMinutes||30} min</div><div class="muted" style="margin-top:4px">👨‍⚕️ ${v.conductedBy}</div><div class="muted">Reason: ${v.reason}</div>${v.meetingLink?`<div style="margin-top:4px"><a href="${v.meetingLink}" target="_blank" style="font-size:12px;color:#0F6E56">🎥 ${v.meetingLink}</a></div>`:''}${v.nextTests?`<div style="margin-top:4px"><span class="badge b-blue">🧪 ${v.nextTests}</span></div>`:''}<button class="btn btn-small btn-primary" style="margin-top:8px" onclick="recordVisitOutcome('${v.id}',${p.id})">Record outcome</button></div>`).join('')}`:''}
+    ${past.length>0?`<hr class="sep"><div class="form-label" style="margin-bottom:8px">PAST VISITS</div>${past.map(v=>`<div class="visit-card completed" style="margin-bottom:8px"><div class="flex-between" style="margin-bottom:6px"><span style="font-weight:500">${v.type}</span><span class="badge b-blue">Completed · ${fmtDate(v.date)}</span></div><div class="muted">👨‍⚕️ ${v.conductedBy}</div>${v.outcome?`<div class="ai-block" style="margin-top:8px;font-size:12px"><b>Outcome:</b> ${v.outcome}</div>`:''}${v.labResults?`<div style="margin-top:4px"><span class="badge b-gray">🧪 ${v.labResults}</span></div>`:''}${v.nextDate?`<div class="muted" style="margin-top:4px">Next visit: ${fmtDate(v.nextDate)}</div>`:''}
+      ${state.followUpFor===v.id?renderFollowUpPanel(v,p.id):`<button class="btn btn-small" style="margin-top:8px" onclick="state.followUpFor='${v.id}';renderContent()">📅 Schedule follow-up</button>`}
+    </div>`).join('')}`:''}
     ${state['recordingVisit']?`<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-top:8px"><div class="form-label" style="margin-bottom:8px">Record Visit Outcome</div><textarea id="visitOutcomeText" rows="3" placeholder="What was discussed, findings, next steps..." style="margin-bottom:8px"></textarea><input type="text" id="visitLabResults" placeholder="Lab results if any (e.g. HbA1c: 7.8%)" style="margin-bottom:8px"><div class="flex" style="gap:8px"><button class="btn btn-primary" onclick="saveVisitOutcome(${p.id})">Save outcome → notify patient</button><button class="btn" onclick="state.recordingVisit=null;renderContent()">Cancel</button></div></div>`:''}`;
+}
+
+function renderFollowUpPanel(v, patientId) {
+  return `<div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;margin-top:8px">
+    <div class="form-label" style="margin-bottom:6px">Schedule Follow-up</div>
+    <div class="flex" style="gap:6px;margin-bottom:8px;flex-wrap:wrap">
+      ${[[7,'1 week'],[15,'15 days'],[30,'1 month']].map(([d,l])=>`<button class="btn btn-small ${state.followUpOffset===d?'btn-primary':''}" onclick="state.followUpOffset=${d};renderContent()">${l}</button>`).join('')}
+    </div>
+    <div class="grid2" style="margin-bottom:8px">
+      <div><div class="form-label">Time</div><select id="fuTime">${generateTimeOptions(v.time)}</select></div>
+      <div><div class="form-label">Type</div><select id="fuType" onchange="toggleMeetingField('fu')"><option value="Physical Visit">Physical Visit</option><option value="Teleconsultation">Teleconsultation</option></select></div>
+    </div>
+    <div id="fuMeetingWrap" style="display:none;margin-bottom:8px"><div class="form-label">Google Meet code</div><input type="text" id="fuMeetingId" placeholder="abc-defg-hij"></div>
+    <div class="flex" style="gap:8px">
+      <button class="btn btn-primary" onclick="saveFollowUp('${v.id}',${patientId})">Save</button>
+      <button class="btn" onclick="state.followUpFor=null;renderContent()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+async function saveFollowUp(visitId, patientId) {
+  const offset = state.followUpOffset || 7;
+  const time = document.getElementById('fuTime')?.value || '10:00';
+  const visitType = document.getElementById('fuType')?.value || 'Physical Visit';
+  const meetingId = document.getElementById('fuMeetingId')?.value?.trim();
+  try {
+    await api(`/visits/${visitId}/follow-up`, 'POST', {
+      offset_days: offset, visit_type: visitType, visit_time: time,
+      meeting_id: visitType === 'Teleconsultation' ? (meetingId || null) : null
+    });
+    state.followUpFor = null; state.followUpOffset = null;
+    await refreshPatientData(patientId);
+    renderContent();
+  } catch(e) { alert('Failed to schedule follow-up: ' + e.message); }
 }
 
 function renderProviderTestsTab(p, sess) {
