@@ -1598,7 +1598,7 @@ async function confirmSlotBooking() {
 }
 
 function renderDoctorSettingsPanel() {
-  const s = state.docSettings || { working_start:'09:00', working_end:'17:00', lunch_start:'13:00', lunch_end:'14:00', slot_minutes:30, working_days:[0,1,2,3,4,5] };
+  const s = state.docSettings || { working_start:'09:00', working_end:'17:00', lunch_start:'12:00', lunch_end:'14:00', slot_minutes:30, working_days:[0,1,2,3,4,5] };
   const dayLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   return `<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:.75rem">
     <div class="form-label" style="margin-bottom:8px">Working Hours</div>
