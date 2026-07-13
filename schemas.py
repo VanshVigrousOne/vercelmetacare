@@ -384,6 +384,8 @@ class VisitOut(BaseModel):
 class VisitEscalateRequest(BaseModel):
     reason: str
     visit_type: str = "Impromptu"       # Impromptu | Emergency
+    preferred_date: Optional[datetime] = None   # CHW's proposed slot — checked against the doctor's calendar
+    duration_minutes: int = 30
 
 
 class VisitAcceptRequest(BaseModel):
