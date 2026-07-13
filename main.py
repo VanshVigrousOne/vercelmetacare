@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, Depends, HTTPException, status, Body, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -88,6 +90,18 @@ app.add_middleware(
 limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Return a single human-readable message instead of FastAPI's raw error list,
+    so the frontend can show it directly to the user."""
+    first = exc.errors()[0] if exc.errors() else None
+    message = first["msg"] if first else "Invalid input."
+    # Pydantic v2 prefixes custom ValueError messages with "Value error, "
+    if message.startswith("Value error, "):
+        message = message[len("Value error, "):]
+    return JSONResponse(status_code=422, content={"detail": message})
 
 
 @app.middleware("http")
