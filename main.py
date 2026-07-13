@@ -1013,15 +1013,26 @@ def request_visit(
     if role == "doctor" and patient.doctor_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    # If the CHW proposed a specific date/time, validate it against the doctor's
+    # actual calendar (working hours, lunch, breaks, existing visits) before
+    # creating the request — this is what lets a CHW confirm the doctor is
+    # actually free instead of blindly firing off a request.
+    proposed_date = payload.preferred_date
+    if proposed_date:
+        ok, err = check_slot_available(db, patient.doctor_id, proposed_date, payload.duration_minutes)
+        if not ok:
+            raise HTTPException(status_code=409, detail=f"Doctor is not available at that time: {err}")
+
     # Provisional clinic visit, awaiting doctor confirmation
     visit = models.ClinicVisit(
         patient_id=patient_id,
         scheduled_by=role.upper(),
         scheduled_by_name=user.name,
         visit_type=payload.visit_type,
-        visit_date=datetime.utcnow() + __import__("datetime").timedelta(days=1),  # provisional
+        visit_date=proposed_date or (datetime.utcnow() + __import__("datetime").timedelta(days=1)),  # provisional
         status="Scheduled",
         reason=payload.reason,
+        duration_minutes=payload.duration_minutes,
         doctor_accepted=False,
     )
     db.add(visit)
@@ -1030,7 +1041,9 @@ def request_visit(
         patient_id=patient_id,
         doctor_id=patient.doctor_id,
         alert_reason=f"Visit Request ({payload.visit_type}): {payload.reason}",
-        doctor_context=f"{role.upper()} {user.name} is requesting a {payload.visit_type.lower()} clinic visit for {patient.name}. Reason: {payload.reason}",
+        doctor_context=f"{role.upper()} {user.name} is requesting a {payload.visit_type.lower()} clinic visit for {patient.name}."
+                        + (f" Proposed slot: {proposed_date.strftime('%d %b %Y, %I:%M %p')} (confirmed free on your calendar)." if proposed_date else "")
+                        + f" Reason: {payload.reason}",
         # Patient self-requests use a distinct source so they reach the CHW only.
         # Doctors only see "VisitRequest" — i.e. once a CHW has reviewed and escalated it.
         source="PatientVisitRequest" if role == "patient" else "VisitRequest",
