@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -121,6 +121,21 @@ class PatientCreate(BaseModel):
     occupation: Optional[str] = None
     phone2: Optional[str] = None
     tag: Optional[str] = None
+
+    @field_validator("height_cm")
+    @classmethod
+    def height_must_be_realistic(cls, v):
+        if v is not None and v > 200:
+            raise ValueError("Height looks too high — please check and re-enter (must be 200 cm or less).")
+        return v
+
+    @field_validator("phone")
+    @classmethod
+    def phone_must_be_valid(cls, v):
+        digits = "".join(ch for ch in v if ch.isdigit())
+        if len(digits) != 10 and not (len(digits) == 12 and digits.startswith("91")):
+            raise ValueError("Phone number must contain exactly 10 digits.")
+        return v
 
 
 class PatientOut(BaseModel):
