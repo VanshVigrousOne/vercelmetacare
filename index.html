@@ -82,7 +82,7 @@ textarea:focus,input:focus,select:focus{border-color:#0F6E56;box-shadow:0 0 0 2p
 .dot-green{background:#1D9E75}
 .dot-amber{background:#EF9F27}
 .dot-red{background:#E24B4A}
-.setup-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;text-align:center;gap:1rem;padding:2rem}
+.setup-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;width:100%;text-align:center;gap:1rem;padding:2rem}
 .setup-card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:2rem;max-width:420px;width:100%}
 .flex{display:flex;align-items:center;gap:8px}
 .flex-between{display:flex;align-items:center;justify-content:space-between}
@@ -141,7 +141,6 @@ textarea:focus,input:focus,select:focus{border-color:#0F6E56;box-shadow:0 0 0 2p
 <div class="app" id="app">
   <div class="topbar">
     <div class="logo">Meta<span>Care</span></div>
-    <div class="muted" style="font-size:12px">Rural Diabetes Management</div>
     <div class="role-tabs" id="roleTabs"></div>
   </div>
   <div class="main" id="mainArea">
@@ -780,11 +779,19 @@ function sendChatMsg() {
 async function submitReport() {
   const text = document.getElementById('reportText').value.trim();
   const sugar = parseFloat(document.getElementById('sugarInput').value) || null;
-  const meds = document.getElementById('medsInput').value === 'true';
+  const medCheckboxes = Array.from(document.querySelectorAll('.medTakenCheck'));
+  let meds = false;
+  let medsNote = '';
+  if (medCheckboxes.length) {
+    const missed = medCheckboxes.filter(cb => !cb.checked).map(cb => cb.value);
+    meds = missed.length === 0; // fully compliant only if every prescribed medicine was taken
+    if (missed.length) medsNote = `Missed: ${missed.join(', ')}. `;
+  }
   if (!text && !sugar) { state.flash = { type:'err', msg:'Please enter data.' }; renderContent(); return; }
   state.loading.submit = true; renderContent();
   try {
-    await api(`/patients/${state.patientId}/logs`, 'POST', { blood_sugar: sugar, medication_taken: meds, raw_text: text || null });
+    const rawText = (medsNote + text).trim() || null;
+    await api(`/patients/${state.patientId}/logs`, 'POST', { blood_sugar: sugar, medication_taken: meds, raw_text: rawText });
     await refreshPatientData(state.patientId);
     state.flash = { type:'ok', msg:'Report submitted! Your care team has been notified.' };
   } catch (e) { state.flash = { type:'err', msg:'Failed: ' + e.message }; }
@@ -1249,7 +1256,7 @@ function renderSidebar() {
   const searchCursorPos = wasSearchFocused ? document.activeElement.selectionStart : null;
   const q = (state.patientSearch || '').trim().toLowerCase();
   const matchesSearch = p => !q || (p.name||'').toLowerCase().includes(q) || (p.village||'').toLowerCase().includes(q) || (p.phone||'').toLowerCase().includes(q);
-  const searchBoxHtml = `<div style="margin:0 4px 8px 4px"><input type="text" id="patientSearchInput" placeholder="🔍 Search patient by name, village, phone..." value="${(state.patientSearch||'').replace(/"/g,'&quot;')}" oninput="state.patientSearch=this.value;renderSidebar()" style="font-size:12px;padding:6px 8px"></div>`;
+  const searchBoxHtml = `<div style="margin:0 0 1rem 0;position:sticky;top:0;background:var(--color-background-primary,#fff);z-index:5;padding-bottom:8px"><input type="text" id="patientSearchInput" placeholder="🔍 Search patient by name, village, phone..." value="${(state.patientSearch||'').replace(/"/g,'&quot;')}" oninput="state.patientSearch=this.value;renderSidebar()" style="font-size:12px;padding:7px 10px"></div>`;
 
   if (state.role === 'Patient') {
     sb.innerHTML = `
@@ -1271,12 +1278,12 @@ function renderSidebar() {
   } else if (state.role === 'CHW') {
     const tasks = getPendingTasks();
     sb.innerHTML = `
+      ${searchBoxHtml}
       <div style="margin-bottom:1rem">
         <div class="sidebar-label">CHW Profile</div>
         <div style="padding:8px 10px"><div class="flex"><div class="avatar av-coral" style="font-size:11px">${initials(sess.name)}</div><div><div class="name-line">${sess.name}</div><div class="sub-line">Community Health Worker</div></div></div></div>
       </div>
       <div class="flex-between" style="margin:0 4px 8px 4px"><div class="sidebar-label" style="margin:0">Patients (${db.patients.length})</div><button class="btn btn-small" onclick="showAddPatient()">+ New</button></div>
-      ${searchBoxHtml}
       ${db.patients.filter(matchesSearch).map(p => {
         const pt = db.tasks.filter(t=>t.patient_id===p.id&&t.status==='Pending');
         const em = pt.filter(t=>t.ai_classification==='Emergency'||t.critical_sugar_alert);
@@ -1299,12 +1306,12 @@ function renderSidebar() {
       }).join('')}`;
   } else if (state.role === 'Dietician') {
     sb.innerHTML = `
+      ${searchBoxHtml}
       <div style="margin-bottom:1rem">
         <div class="sidebar-label">Dietician Profile</div>
         <div style="padding:8px 10px"><div class="flex"><div class="avatar av-amber" style="font-size:11px">${initials(sess.name)}</div><div><div class="name-line">${sess.name}</div><div class="sub-line">Dietician · Diet &amp; Exercise only</div></div></div></div>
       </div>
       <div class="sidebar-label" style="margin:0 4px 8px 4px">My Patients (${db.patients.length})</div>
-      ${searchBoxHtml}
       ${db.patients.length===0?`<div class="muted" style="font-size:12px;padding:4px">No patients assigned to you yet.</div>`:''}
       ${db.patients.filter(matchesSearch).map(p => `<div class="patient-item ${state.selectedPatient===p.id?'active':''}" onclick="state.selectedPatient=${p.id};renderContent()">
           <div class="avatar av-teal" style="font-size:11px">${initials(p.name)}</div>
@@ -1312,6 +1319,7 @@ function renderSidebar() {
         </div>`).join('')}`;
   } else {
     sb.innerHTML = `
+      ${searchBoxHtml}
       <div style="margin-bottom:1rem">
         <div class="sidebar-label">Doctor Profile</div>
         <div style="padding:8px 10px"><div class="flex"><div class="avatar av-blue" style="font-size:11px">${initials(sess.name)}</div><div><div class="name-line">${sess.name}</div><div class="sub-line">Diabetologist</div></div></div></div>
@@ -1320,7 +1328,6 @@ function renderSidebar() {
         <div class="sidebar-label" style="margin:0">Care Team</div>
         <div style="display:flex;gap:4px"><button class="btn btn-small" onclick="showAddCHW()">+ CHW</button><button class="btn btn-small" onclick="showAddDietician()">+ Diet</button><button class="btn btn-small" onclick="showAddPatient()">+ Pat</button></div>
       </div>
-      ${searchBoxHtml}
       ${db.chws.length===0?`<div class="muted" style="font-size:12px;padding:4px">No CHWs.</div>`:''}
       ${db.chws.map(c => {
         const chwPats = db.patients.filter(p=>p.chw_id===c.id).filter(matchesSearch);
@@ -1446,10 +1453,16 @@ function renderPatientOverviewTab(patient, logs, rx, unread) {
 }
 
 function renderPatientReportTab(patient, rx) {
-  const medsField = rx
-    ? `<div><div class="form-label">Took prescribed medicine today?</div><div class="muted" style="font-size:11px;margin-bottom:4px">💊 ${rx.medication_name} — ${rx.dosage}</div><select id="medsInput"><option value="true">Yes ✓</option><option value="false">No ✗</option></select></div>`
-    : `<div><div class="form-label">Medication taken today?</div><select id="medsInput" disabled><option value="false">No active prescription</option></select><div class="muted" style="font-size:11px;margin-top:4px">Your doctor hasn't issued a prescription yet.</div></div>`;
-  return `<div class="card"><div class="card-title">📝 Submit Today's Health Report</div><div class="form-label">How are you feeling? (Hinglish is fine)</div><textarea id="reportText" rows="3" placeholder="e.g. Aaj thoda chakkar aa raha hai, dawai li..." style="margin-bottom:10px"></textarea><div class="grid2" style="margin-bottom:10px"><div><div class="form-label">Blood sugar (mg/dL)</div><input type="number" id="sugarInput" placeholder="e.g. 187"></div>${medsField}</div><div class="row"><button class="btn btn-primary" onclick="submitReport()">${state.loading.submit?'<span class="spinner"></span>Sending...':'Submit report'}</button>${state.flash?`<div class="${state.flash.type==='ok'?'success-banner':'alert-banner'}" style="flex:1;margin:0">${state.flash.msg}</div>`:''}</div></div><div class="info-banner"><span>ℹ️</span><span>Your report will be reviewed by your CHW. In an emergency, call CHW directly.</span></div>`;
+  const meds = rx ? rx.medication_name.split(/[,+]/).map(m=>m.trim()).filter(Boolean) : [];
+  const medsField = meds.length
+    ? `<div><div class="form-label">Took prescribed medicine(s) today?</div>
+        <div class="muted" style="font-size:11px;margin-bottom:6px">${rx.dosage||''}${rx.instructions?' · '+rx.instructions:''}</div>
+        <div style="border:0.5px solid var(--color-border-tertiary);border-radius:8px;padding:8px 10px">
+          ${meds.map((m,i)=>`<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="medTakenCheck" id="medTaken_${i}" value="${m.replace(/"/g,'&quot;')}">💊 ${m}</label>`).join('')}
+        </div>
+       </div>`
+    : `<div><div class="form-label">Medication taken today?</div><div class="muted" style="font-size:12px;padding:8px 0">Your doctor hasn't issued a prescription yet.</div></div>`;
+  return `<div class="card"><div class="card-title">📝 Submit Today's Health Report</div><div class="form-label">How are you feeling? (Hinglish is fine)</div><textarea id="reportText" rows="3" placeholder="e.g. Aaj thoda chakkar aa raha hai, dawai li..." style="margin-bottom:10px"></textarea><div class="grid2" style="margin-bottom:10px;align-items:start"><div><div class="form-label">Blood sugar (mg/dL)</div><input type="number" id="sugarInput" placeholder="e.g. 187"></div>${medsField}</div><div class="row"><button class="btn btn-primary" onclick="submitReport()">${state.loading.submit?'<span class="spinner"></span>Sending...':'Submit report'}</button>${state.flash?`<div class="${state.flash.type==='ok'?'success-banner':'alert-banner'}" style="flex:1;margin:0">${state.flash.msg}</div>`:''}</div></div><div class="info-banner"><span>ℹ️</span><span>Your report will be reviewed by your CHW. In an emergency, call CHW directly.</span></div>`;
 }
 
 function renderPatientHistoryTab(patient, logs) {
