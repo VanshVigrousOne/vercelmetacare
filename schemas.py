@@ -335,10 +335,12 @@ class DeepAnalysisRequest(BaseModel):
 
 class VisitCreate(BaseModel):
     patient_id: int
-    visit_type: str = "Mandatory"       # Mandatory | Impromptu | Emergency
+    visit_type: str = "Mandatory"       # Mandatory | Impromptu | Emergency | Physical Visit | Teleconsultation
     visit_date: datetime
     reason: Optional[str] = None
     next_visit_date: Optional[datetime] = None
+    duration_minutes: int = 30
+    meeting_id: Optional[str] = None    # Google Meet code — Teleconsultation visits only
 
 
 class VisitUpdate(BaseModel):
@@ -350,6 +352,7 @@ class VisitUpdate(BaseModel):
     next_visit_date: Optional[datetime] = None
     diet_validated_at_visit: Optional[bool] = None
     diet_validation_note: Optional[str] = None
+    meeting_id: Optional[str] = None    # Google Meet code — Teleconsultation visits only
 
 
 class VisitOut(BaseModel):
@@ -370,6 +373,9 @@ class VisitOut(BaseModel):
     diet_validation_note: Optional[str]
     doctor_accepted: Optional[bool]
     chw_notified_acceptance: Optional[bool]
+    duration_minutes: Optional[int] = 30
+    meeting_id: Optional[str] = None
+    meeting_link: Optional[str] = None   # derived from meeting_id — what the patient uses to join
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -383,6 +389,78 @@ class VisitEscalateRequest(BaseModel):
 class VisitAcceptRequest(BaseModel):
     visit_date: datetime
     notes: Optional[str] = None
+    duration_minutes: int = 30
+    meeting_id: Optional[str] = None    # Google Meet code — Teleconsultation visits only
+
+
+class FollowUpCreate(BaseModel):
+    """Quick 'Schedule Follow-up' action off an existing/just-completed visit."""
+    offset_days: int = 7                # 7 | 15 | 30 etc, or any custom number
+    visit_type: str = "Physical Visit"  # Physical Visit | Teleconsultation
+    visit_time: Optional[str] = None    # "HH:MM" — defaults to same time as the source visit
+    reason: Optional[str] = None
+    duration_minutes: int = 30
+    meeting_id: Optional[str] = None    # Google Meet code — Teleconsultation visits only
+
+
+# ── Doctor Calendar: working hours, breaks, slot grid ──────────────────────
+
+class DoctorSettingsOut(BaseModel):
+    doctor_id: int
+    working_start: str
+    working_end: str
+    lunch_start: str
+    lunch_end: str
+    slot_minutes: int
+    working_days: List[int]
+
+    model_config = {"from_attributes": True}
+
+
+class DoctorSettingsUpdate(BaseModel):
+    working_start: Optional[str] = None
+    working_end: Optional[str] = None
+    lunch_start: Optional[str] = None
+    lunch_end: Optional[str] = None
+    slot_minutes: Optional[int] = None
+    working_days: Optional[List[int]] = None
+
+
+class DoctorBreakCreate(BaseModel):
+    date: str            # "YYYY-MM-DD"
+    start_time: str      # "HH:MM"
+    end_time: str        # "HH:MM"
+    reason: str = "Blocked"
+
+
+class DoctorBreakOut(BaseModel):
+    id: int
+    doctor_id: int
+    date: str
+    start_time: str
+    end_time: str
+    reason: Optional[str]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CalendarSlot(BaseModel):
+    time: str                          # "HH:MM"
+    status: str                        # available | booked | lunch | blocked | closed
+    label: Optional[str] = None
+    visit_id: Optional[int] = None
+    patient_id: Optional[int] = None
+    patient_name: Optional[str] = None
+    visit_type: Optional[str] = None
+    break_id: Optional[int] = None
+    reason: Optional[str] = None
+
+
+class CalendarDayOut(BaseModel):
+    date: str
+    slot_minutes: int
+    slots: List[CalendarSlot]
 
 
 #  Diet Plan
