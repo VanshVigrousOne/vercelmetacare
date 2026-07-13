@@ -225,6 +225,13 @@ let db = {
 
 // ── Shared form helpers ──────────────────────────────────────────────────────
 function todayStr() { const d = new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+// Sends a visit's date/time as local wall-clock time (no UTC shift), matching
+// the backend's naive-local-time scheduling logic. Using dt.toISOString()
+// here would convert to UTC and corrupt the hour used for working-hours checks.
+function toLocalIso(dt) {
+  const p = n => String(n).padStart(2,'0');
+  return `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}T${p(dt.getHours())}:${p(dt.getMinutes())}:00`;
+}
 function addDaysToDateStr(dateStr, n) { const d = new Date(dateStr+'T00:00:00'); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function fmtDayLabel(dateStr) {
   const d = new Date(dateStr+'T00:00:00');
@@ -867,7 +874,7 @@ async function scheduleVisit(patientId, fromProfile=false, prefix) {
   try {
     await api('/visits', 'POST', {
       patient_id: patientId, visit_type: visitType,
-      visit_date: dt.toISOString(), reason: reasonEl?.value || '',
+      visit_date: toLocalIso(dt), reason: reasonEl?.value || '',
       duration_minutes: parseInt(durEl?.value || '30'),
       meeting_id: visitType === 'Teleconsultation' ? (meetingEl?.value?.trim() || null) : null
     });
@@ -919,7 +926,7 @@ async function doctorAcceptCase(patientId, alertId) {
   state.loading['accept_'+alertId] = true; renderContent();
   try {
     await api(`/alerts/${alertId}/accept-visit`, 'POST', {
-      visit_date: dt.toISOString(), notes: tests, duration_minutes: duration,
+      visit_date: toLocalIso(dt), notes: tests, duration_minutes: duration,
       meeting_id: meetingId || null
     });
     await fetchAllData();
@@ -1578,7 +1585,7 @@ async function confirmSlotBooking() {
   state.loading.calBook = true; renderContent();
   try {
     await api('/visits', 'POST', {
-      patient_id: patientId, visit_type: visitType, visit_date: dt.toISOString(),
+      patient_id: patientId, visit_type: visitType, visit_date: toLocalIso(dt),
       reason: reason || '', duration_minutes: duration,
       meeting_id: visitType === 'Teleconsultation' ? (meetingId || null) : null
     });
