@@ -1369,13 +1369,16 @@ def raw_ai(payload: RawAIRequest, doctor: models.Doctor = Depends(auth.require_d
 # ---------------------------------------------------------------------------
 # SCHEDULING ENGINE
 #
-# Every doctor has a working schedule (DoctorSettings): working hours, a
-# lunch window, a slot size (default 30 min) and working days. On top of
-# that, one-off DoctorBreak rows block specific time ranges (conference,
-# ward round, etc). A slot is available only if it's inside working hours,
-# outside lunch, outside any break, and not already covered by another
-# non-cancelled visit. This logic is shared by the calendar view and by
-# every endpoint that creates/accepts/moves a visit.
+# Every *provider* — the doctor, or each individual CHW — has their own
+# working schedule (DoctorSettings / ChwSettings): working hours, a lunch
+# window, a slot size (default 30 min) and working days, plus one-off
+# DoctorBreak/ChwBreak rows for ad-hoc blocked time. A slot is available only
+# if it's inside working hours, outside lunch, outside any break, and not
+# already covered by another non-cancelled visit *on that same provider's
+# calendar*. Multiple CHWs under one doctor each get their own independent
+# calendar — never shared with each other or with the doctor. This logic is
+# shared by the calendar view and by every endpoint that creates/accepts/
+# moves a visit.
 # ---------------------------------------------------------------------------
 
 from datetime import timedelta
@@ -1390,23 +1393,44 @@ def _minutes_to_time(m: int) -> str:
     return f"{m // 60:02d}:{m % 60:02d}"
 
 
-def get_or_create_doctor_settings(db: Session, doctor_id: int) -> models.DoctorSettings:
-    settings = db.query(models.DoctorSettings).filter(models.DoctorSettings.doctor_id == doctor_id).first()
+def get_or_create_provider_settings(db: Session, provider_role: str, provider_id: int):
+    """Returns the DoctorSettings or ChwSettings row for this provider, creating
+    a default one if it doesn't exist yet. Each CHW's row is independent."""
+    if provider_role == "chw":
+        settings = db.query(models.ChwSettings).filter(models.ChwSettings.chw_id == provider_id).first()
+        if not settings:
+            settings = models.ChwSettings(chw_id=provider_id)
+            db.add(settings)
+            db.commit()
+            db.refresh(settings)
+        return settings
+    settings = db.query(models.DoctorSettings).filter(models.DoctorSettings.doctor_id == provider_id).first()
     if not settings:
-        settings = models.DoctorSettings(doctor_id=doctor_id)
+        settings = models.DoctorSettings(doctor_id=provider_id)
         db.add(settings)
         db.commit()
         db.refresh(settings)
     return settings
 
 
-def check_slot_available(db: Session, doctor_id: int, visit_dt: datetime, duration_minutes: int,
-                          exclude_visit_id: Optional[int] = None):
+def _provider_break_query(db: Session, provider_role: str, provider_id: int, date_str: str):
+    if provider_role == "chw":
+        return db.query(models.ChwBreak).filter(
+            models.ChwBreak.chw_id == provider_id, models.ChwBreak.date == date_str
+        )
+    return db.query(models.DoctorBreak).filter(
+        models.DoctorBreak.doctor_id == provider_id, models.DoctorBreak.date == date_str
+    )
+
+
+def check_slot_available(db: Session, provider_role: str, provider_id: int, visit_dt: datetime,
+                          duration_minutes: int, exclude_visit_id: Optional[int] = None):
     """Returns (ok: bool, error_message: Optional[str])."""
-    settings = get_or_create_doctor_settings(db, doctor_id)
+    who = "Doctor" if provider_role != "chw" else "CHW"
+    settings = get_or_create_provider_settings(db, provider_role, provider_id)
     weekday = visit_dt.weekday()
     if weekday not in (settings.working_days or []):
-        return False, "Doctor is not working on this day."
+        return False, f"{who} is not working on this day."
 
     start = _time_to_minutes(settings.working_start)
     end = _time_to_minutes(settings.working_end)
@@ -1416,32 +1440,27 @@ def check_slot_available(db: Session, doctor_id: int, visit_dt: datetime, durati
     req_end = req_start + duration_minutes
 
     if req_start < start or req_end > end:
-        return False, f"Doctor's working hours are {settings.working_start}-{settings.working_end}."
+        return False, f"{who}'s working hours are {settings.working_start}-{settings.working_end}."
 
     if req_start < lunch_end and req_end > lunch_start:
-        return False, f"Doctor is on Lunch Break ({settings.lunch_start}-{settings.lunch_end})."
+        return False, f"{who} is on Lunch Break ({settings.lunch_start}-{settings.lunch_end})."
 
     date_str = visit_dt.strftime("%Y-%m-%d")
-    breaks = db.query(models.DoctorBreak).filter(
-        models.DoctorBreak.doctor_id == doctor_id, models.DoctorBreak.date == date_str
-    ).all()
+    breaks = _provider_break_query(db, provider_role, provider_id, date_str).all()
     for b in breaks:
         b_start = _time_to_minutes(b.start_time)
         b_end = _time_to_minutes(b.end_time)
         if req_start < b_end and req_end > b_start:
-            return False, f"Doctor has a blocked period ({b.reason}) at this time."
+            return False, f"{who} has a blocked period ({b.reason}) at this time."
 
     day_start_dt = datetime.combine(visit_dt.date(), datetime.min.time())
     day_end_dt = day_start_dt + timedelta(days=1)
-    q = (
-        db.query(models.ClinicVisit)
-        .join(models.Patient, models.ClinicVisit.patient_id == models.Patient.id)
-        .filter(
-            models.Patient.doctor_id == doctor_id,
-            models.ClinicVisit.visit_date >= day_start_dt,
-            models.ClinicVisit.visit_date < day_end_dt,
-            models.ClinicVisit.status != "Cancelled",
-        )
+    q = db.query(models.ClinicVisit).filter(
+        models.ClinicVisit.provider_role == provider_role,
+        models.ClinicVisit.provider_id == provider_id,
+        models.ClinicVisit.visit_date >= day_start_dt,
+        models.ClinicVisit.visit_date < day_end_dt,
+        models.ClinicVisit.status != "Cancelled",
     )
     if exclude_visit_id:
         q = q.filter(models.ClinicVisit.id != exclude_visit_id)
@@ -1451,19 +1470,21 @@ def check_slot_available(db: Session, doctor_id: int, visit_dt: datetime, durati
         v_start = v.visit_date.hour * 60 + v.visit_date.minute
         v_end = v_start + (v.duration_minutes or 30)
         if req_start < v_end and req_end > v_start:
-            return False, "Doctor already has an appointment at this time."
+            return False, f"{who} already has an appointment at this time."
 
     return True, None
 
 
-def build_calendar_day(db: Session, doctor_id: int, day) -> schemas.CalendarDayOut:
-    settings = get_or_create_doctor_settings(db, doctor_id)
+def build_calendar_day(db: Session, provider_role: str, provider_id: int, day, owner_name: str = None,
+                        editable: bool = False) -> schemas.CalendarDayOut:
+    settings = get_or_create_provider_settings(db, provider_role, provider_id)
     date_str = day.strftime("%Y-%m-%d")
     weekday = day.weekday()
     slot_min = settings.slot_minutes or 30
 
     if weekday not in (settings.working_days or []):
-        return schemas.CalendarDayOut(date=date_str, slot_minutes=slot_min, slots=[])
+        return schemas.CalendarDayOut(date=date_str, slot_minutes=slot_min, slots=[],
+                                       owner_role=provider_role, owner_name=owner_name, editable=editable)
 
     start = _time_to_minutes(settings.working_start)
     end = _time_to_minutes(settings.working_end)
@@ -1474,18 +1495,16 @@ def build_calendar_day(db: Session, doctor_id: int, day) -> schemas.CalendarDayO
     day_end_dt = day_start_dt + timedelta(days=1)
     visits = (
         db.query(models.ClinicVisit)
-        .join(models.Patient, models.ClinicVisit.patient_id == models.Patient.id)
         .filter(
-            models.Patient.doctor_id == doctor_id,
+            models.ClinicVisit.provider_role == provider_role,
+            models.ClinicVisit.provider_id == provider_id,
             models.ClinicVisit.visit_date >= day_start_dt,
             models.ClinicVisit.visit_date < day_end_dt,
             models.ClinicVisit.status != "Cancelled",
         )
         .all()
     )
-    breaks = db.query(models.DoctorBreak).filter(
-        models.DoctorBreak.doctor_id == doctor_id, models.DoctorBreak.date == date_str
-    ).all()
+    breaks = _provider_break_query(db, provider_role, provider_id, date_str).all()
 
     slots: List[schemas.CalendarSlot] = []
     t = start
@@ -1521,22 +1540,15 @@ def build_calendar_day(db: Session, doctor_id: int, day) -> schemas.CalendarDayO
         ))
         t += slot_min
 
-    return schemas.CalendarDayOut(date=date_str, slot_minutes=slot_min, slots=slots)
-
-
-def _resolve_doctor_id_for_calendar(role: str, user) -> int:
-    if role == "doctor":
-        return user.id
-    if role == "chw":
-        return user.doctor_id
-    raise HTTPException(status_code=403, detail="Only doctors and CHWs can view the calendar")
+    return schemas.CalendarDayOut(date=date_str, slot_minutes=slot_min, slots=slots,
+                                   owner_role=provider_role, owner_name=owner_name, editable=editable)
 
 
 # ── Doctor working hours / lunch / slot size ────────────────────────────────
 
 @app.get("/doctors/me/settings", response_model=schemas.DoctorSettingsOut, tags=["Calendar"])
 def get_my_doctor_settings(doctor: models.Doctor = Depends(auth.require_doctor), db: Session = Depends(get_db)):
-    return get_or_create_doctor_settings(db, doctor.id)
+    return get_or_create_provider_settings(db, "doctor", doctor.id)
 
 
 @app.put("/doctors/me/settings", response_model=schemas.DoctorSettingsOut, tags=["Calendar"])
@@ -1545,7 +1557,7 @@ def update_my_doctor_settings(
     doctor: models.Doctor = Depends(auth.require_doctor),
     db: Session = Depends(get_db),
 ):
-    settings = get_or_create_doctor_settings(db, doctor.id)
+    settings = get_or_create_provider_settings(db, "doctor", doctor.id)
     for key, value in payload.dict(exclude_unset=True).items():
         setattr(settings, key, value)
     db.commit()
@@ -1553,7 +1565,7 @@ def update_my_doctor_settings(
     return settings
 
 
-# ── Dynamic breaks (block time) ─────────────────────────────────────────────
+# ── Dynamic breaks (block time) — doctor ────────────────────────────────────
 
 @app.post("/doctors/me/breaks", response_model=schemas.DoctorBreakOut, tags=["Calendar"])
 def create_doctor_break(
@@ -1594,26 +1606,117 @@ def delete_doctor_break(
     return {"ok": True}
 
 
+# ── CHW working hours / lunch / slot size — each CHW's own, independent ────
+
+@app.get("/chws/me/settings", response_model=schemas.ChwSettingsOut, tags=["Calendar"])
+def get_my_chw_settings(current=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    role, user = current
+    if role != "chw":
+        raise HTTPException(status_code=403, detail="CHW only")
+    return get_or_create_provider_settings(db, "chw", user.id)
+
+
+@app.put("/chws/me/settings", response_model=schemas.ChwSettingsOut, tags=["Calendar"])
+def update_my_chw_settings(
+    payload: schemas.ChwSettingsUpdate,
+    current=Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    role, user = current
+    if role != "chw":
+        raise HTTPException(status_code=403, detail="CHW only")
+    settings = get_or_create_provider_settings(db, "chw", user.id)
+    for key, value in payload.dict(exclude_unset=True).items():
+        setattr(settings, key, value)
+    db.commit()
+    db.refresh(settings)
+    return settings
+
+
+# ── Dynamic breaks (block time) — CHW's own calendar ────────────────────────
+
+@app.post("/chws/me/breaks", response_model=schemas.ChwBreakOut, tags=["Calendar"])
+def create_chw_break(
+    payload: schemas.ChwBreakCreate,
+    current=Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    role, user = current
+    if role != "chw":
+        raise HTTPException(status_code=403, detail="CHW only")
+    brk = models.ChwBreak(chw_id=user.id, **payload.dict())
+    db.add(brk)
+    db.commit()
+    db.refresh(brk)
+    return brk
+
+
+@app.get("/chws/me/breaks", response_model=List[schemas.ChwBreakOut], tags=["Calendar"])
+def list_chw_breaks(
+    date: Optional[str] = None,
+    current=Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    role, user = current
+    if role != "chw":
+        raise HTTPException(status_code=403, detail="CHW only")
+    q = db.query(models.ChwBreak).filter(models.ChwBreak.chw_id == user.id)
+    if date:
+        q = q.filter(models.ChwBreak.date == date)
+    return q.all()
+
+
+@app.delete("/chws/me/breaks/{break_id}", tags=["Calendar"])
+def delete_chw_break(
+    break_id: int,
+    current=Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    role, user = current
+    if role != "chw":
+        raise HTTPException(status_code=403, detail="CHW only")
+    brk = db.query(models.ChwBreak).filter(models.ChwBreak.id == break_id).first()
+    if not brk or brk.chw_id != user.id:
+        raise HTTPException(status_code=404, detail="Break not found")
+    db.delete(brk)
+    db.commit()
+    return {"ok": True}
+
+
 # ── Calendar day view (available / booked / lunch / blocked slots) ─────────
 
 @app.get("/calendar/{date}", response_model=schemas.CalendarDayOut, tags=["Calendar"])
 def get_calendar_day(
     date: str,
-    doctor_id: Optional[int] = None,
+    view: Optional[str] = None,   # CHW only: pass view=doctor to peek at the doctor's calendar (read-only)
     current=Depends(auth.get_current_user),
     db: Session = Depends(get_db),
 ):
-    """date is 'YYYY-MM-DD'. Doctors always see their own calendar; CHWs see
-    the doctor they report to (or pass doctor_id explicitly if needed)."""
+    """date is 'YYYY-MM-DD'.
+    - Doctor: always sees their own calendar (editable).
+    - CHW: by default sees their OWN calendar (editable — it's their own patient
+      visits). Pass ?view=doctor to instead see their supervising doctor's
+      calendar, strictly read-only, e.g. to pick a free slot before requesting
+      a doctor visit. Each CHW's own calendar is completely independent of
+      every other CHW's — nothing here is ever shared between them.
+    """
     role, user = current
-    resolved_doctor_id = doctor_id or _resolve_doctor_id_for_calendar(role, user)
-    if role == "chw" and doctor_id and doctor_id != user.doctor_id:
-        raise HTTPException(status_code=403, detail="Forbidden")
     try:
         day = datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
-    return build_calendar_day(db, resolved_doctor_id, day)
+
+    if role == "doctor":
+        return build_calendar_day(db, "doctor", user.id, day, owner_name=user.name, editable=True)
+
+    if role == "chw":
+        if view == "doctor":
+            doctor = db.query(models.Doctor).filter(models.Doctor.id == user.doctor_id).first()
+            return build_calendar_day(db, "doctor", user.doctor_id, day,
+                                       owner_name=(doctor.name if doctor else None), editable=False)
+        return build_calendar_day(db, "chw", user.id, day, owner_name=user.name, editable=True)
+
+    raise HTTPException(status_code=403, detail="Only doctors and CHWs can view a calendar")
 
 
 # CLINIC VISITS
@@ -1622,13 +1725,16 @@ def get_calendar_day(
 @app.post("/visits", response_model=schemas.VisitOut, tags=["Visits"])
 def create_visit(payload: schemas.VisitCreate, db: Session = Depends(get_db), current=Depends(auth.get_current_user)):
     role, user = current
-    if role not in ("chw", "doctor"): raise HTTPException(status_code=403)
+    # Only the doctor can directly create a *confirmed* visit — this locks the
+    # slot on the calendar and immediately tells the patient it's scheduled.
+    # CHWs propose a time instead via POST /patients/{id}/request-visit, which
+    # checks the same calendar but leaves the doctor to confirm it.
+    if role != "doctor":
+        raise HTTPException(status_code=403, detail="Only the doctor can directly schedule a confirmed visit. Use 'Request Doctor Visit' instead.")
     patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    if role == "chw" and patient.chw_id != user.id:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    if role == "doctor" and patient.doctor_id != user.id:
+    if patient.doctor_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     ok, err = check_slot_available(db, patient.doctor_id, payload.visit_date, payload.duration_minutes)
@@ -1673,17 +1779,17 @@ def schedule_follow_up(
 ):
     """Quick 'Schedule Follow-up' action off an existing visit — e.g. one week later."""
     role, user = current
-    if role not in ("chw", "doctor"):
-        raise HTTPException(status_code=403, detail="CHW or Doctor only")
+    # Same rule as POST /visits — this creates a confirmed booking, so only the
+    # doctor can do it directly. A CHW should request a follow-up instead.
+    if role != "doctor":
+        raise HTTPException(status_code=403, detail="Only the doctor can directly schedule a confirmed follow-up.")
     source = db.query(models.ClinicVisit).filter(models.ClinicVisit.id == visit_id).first()
     if not source:
         raise HTTPException(status_code=404, detail="Visit not found")
     patient = db.query(models.Patient).filter(models.Patient.id == source.patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    if role == "chw" and patient.chw_id != user.id:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    if role == "doctor" and patient.doctor_id != user.id:
+    if patient.doctor_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     base_date = (source.visit_date or datetime.utcnow()) + timedelta(days=payload.offset_days)
