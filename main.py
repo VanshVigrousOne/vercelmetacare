@@ -1019,15 +1019,18 @@ def request_visit(
     # actually free instead of blindly firing off a request.
     proposed_date = payload.preferred_date
     if proposed_date:
-        ok, err = check_slot_available(db, patient.doctor_id, proposed_date, payload.duration_minutes)
+        ok, err = check_slot_available(db, "doctor", patient.doctor_id, proposed_date, payload.duration_minutes)
         if not ok:
             raise HTTPException(status_code=409, detail=f"Doctor is not available at that time: {err}")
 
-    # Provisional clinic visit, awaiting doctor confirmation
+    # Provisional clinic visit, awaiting doctor confirmation — this always
+    # lands on the doctor's calendar (the doctor is the one who confirms it).
     visit = models.ClinicVisit(
         patient_id=patient_id,
         scheduled_by=role.upper(),
         scheduled_by_name=user.name,
+        provider_role="doctor",
+        provider_id=patient.doctor_id,
         visit_type=payload.visit_type,
         visit_date=proposed_date or (datetime.utcnow() + __import__("datetime").timedelta(days=1)),  # provisional
         status="Scheduled",
@@ -1100,12 +1103,18 @@ def accept_visit(
             scheduled_by_name=doctor.name,
             visit_type="Mandatory",
             reason=alert.alert_reason,
+            provider_role="doctor",
+            provider_id=doctor.id,
         )
         db.add(visit)
         db.flush()
+    else:
+        # Backfill in case this provisional visit predates the provider fields.
+        visit.provider_role = "doctor"
+        visit.provider_id = doctor.id
 
     ok, err = check_slot_available(
-        db, doctor.id, payload.visit_date, payload.duration_minutes,
+        db, "doctor", doctor.id, payload.visit_date, payload.duration_minutes,
         exclude_visit_id=visit.id if visit.id else None,
     )
     if not ok:
@@ -1725,19 +1734,26 @@ def get_calendar_day(
 @app.post("/visits", response_model=schemas.VisitOut, tags=["Visits"])
 def create_visit(payload: schemas.VisitCreate, db: Session = Depends(get_db), current=Depends(auth.get_current_user)):
     role, user = current
-    # Only the doctor can directly create a *confirmed* visit — this locks the
-    # slot on the calendar and immediately tells the patient it's scheduled.
-    # CHWs propose a time instead via POST /patients/{id}/request-visit, which
-    # checks the same calendar but leaves the doctor to confirm it.
-    if role != "doctor":
-        raise HTTPException(status_code=403, detail="Only the doctor can directly schedule a confirmed visit. Use 'Request Doctor Visit' instead.")
+    # Doctor and CHW can each directly create a *confirmed* visit — it locks
+    # the slot on THEIR OWN calendar and immediately tells the patient it's
+    # scheduled. A CHW booking here is a home visit on the CHW's own
+    # independent calendar; it never touches the doctor's calendar. To
+    # request time on the doctor's calendar instead, use
+    # POST /patients/{id}/request-visit, which leaves the doctor to confirm.
+    if role not in ("doctor", "chw"):
+        raise HTTPException(status_code=403, detail="Only the doctor or a CHW can directly schedule a confirmed visit. Use 'Request Doctor Visit' instead.")
     patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    if patient.doctor_id != user.id:
+    if role == "doctor" and patient.doctor_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "chw" and patient.chw_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    ok, err = check_slot_available(db, patient.doctor_id, payload.visit_date, payload.duration_minutes)
+    provider_role = "doctor" if role == "doctor" else "chw"
+    provider_id = user.id
+
+    ok, err = check_slot_available(db, provider_role, provider_id, payload.visit_date, payload.duration_minutes)
     if not ok:
         raise HTTPException(status_code=409, detail=err)
 
@@ -1747,6 +1763,7 @@ def create_visit(payload: schemas.VisitCreate, db: Session = Depends(get_db), cu
         visit_date=payload.visit_date, reason=payload.reason, status="Scheduled",
         duration_minutes=payload.duration_minutes,
         meeting_id=payload.meeting_id if payload.visit_type == "Teleconsultation" else None,
+        provider_role=provider_role, provider_id=provider_id,
     )
     db.add(visit)
     db.commit()
@@ -1779,25 +1796,30 @@ def schedule_follow_up(
 ):
     """Quick 'Schedule Follow-up' action off an existing visit — e.g. one week later."""
     role, user = current
-    # Same rule as POST /visits — this creates a confirmed booking, so only the
-    # doctor can do it directly. A CHW should request a follow-up instead.
-    if role != "doctor":
-        raise HTTPException(status_code=403, detail="Only the doctor can directly schedule a confirmed follow-up.")
+    # Same rule as POST /visits — this creates a confirmed booking, so only
+    # the doctor or a CHW can do it directly, each on their own calendar.
+    if role not in ("doctor", "chw"):
+        raise HTTPException(status_code=403, detail="Only the doctor or a CHW can directly schedule a confirmed follow-up.")
     source = db.query(models.ClinicVisit).filter(models.ClinicVisit.id == visit_id).first()
     if not source:
         raise HTTPException(status_code=404, detail="Visit not found")
     patient = db.query(models.Patient).filter(models.Patient.id == source.patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
-    if patient.doctor_id != user.id:
+    if role == "doctor" and patient.doctor_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "chw" and patient.chw_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    provider_role = "doctor" if role == "doctor" else "chw"
+    provider_id = user.id
 
     base_date = (source.visit_date or datetime.utcnow()) + timedelta(days=payload.offset_days)
     if payload.visit_time:
         hh, mm = payload.visit_time.split(":")
         base_date = base_date.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
 
-    ok, err = check_slot_available(db, patient.doctor_id, base_date, payload.duration_minutes)
+    ok, err = check_slot_available(db, provider_role, provider_id, base_date, payload.duration_minutes)
     if not ok:
         raise HTTPException(status_code=409, detail=err)
 
@@ -1807,6 +1829,7 @@ def schedule_follow_up(
         reason=payload.reason or f"Follow-up to visit #{source.id}",
         status="Scheduled", duration_minutes=payload.duration_minutes,
         meeting_id=payload.meeting_id if payload.visit_type == "Teleconsultation" else None,
+        provider_role=provider_role, provider_id=provider_id,
     )
     db.add(visit)
     db.flush()
@@ -1874,7 +1897,8 @@ def update_visit(
         if new_date:  # don't pass None to the validator
             ok, err = check_slot_available(
                 db,
-                patient.doctor_id,
+                visit.provider_role or "doctor",
+                visit.provider_id or patient.doctor_id,
                 new_date,
                 new_duration,
                 exclude_visit_id=visit.id,  # visit doesn't conflict with its own old slot
