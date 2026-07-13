@@ -209,11 +209,11 @@ let state = {
   // Calendar / scheduling
   viewMode: null,                 // null | 'calendar'
   calendarDate: todayStr(),       // 'YYYY-MM-DD' currently viewed
-  calendarDoctorId: null,         // resolved doctor whose schedule we're viewing
+  calendarView: 'mine',           // CHW only: 'mine' (own calendar) | 'doctor' (view-only)
   calendarDay: null,              // cached CalendarDayOut for calendarDate
   calSlotBooking: null,           // time string of slot currently being booked, or null
   calBookPatientId: null,
-  docSettings: null, docBreaks: [],
+  mySettings: null,               // current user's own DoctorSettings/ChwSettings
   showDoctorSettings: false, showAddBreak: false,
   followUpFor: null               // visit id currently showing "Schedule Follow-up" form
 };
@@ -1102,14 +1102,22 @@ async function validateTask(taskId) {
 }
 
 async function sendNotification(patientId) {
-  const msg = document.getElementById('notifMsg').value.trim();
+  const el = document.getElementById('notifMsg');
+  const msg = el.value.trim();
   if (!msg) return;
   state.loading['notif_'+patientId] = true; renderContent();
   try {
     await api('/notifications', 'POST', { patient_id: patientId, message: msg, sent_by: getSession().role === 'doctor' ? 'Doctor' : 'CHW', sent_by_name: getSession().name });
     await refreshPatientData(patientId);
-  } catch(e) {}
-  state.loading['notif_'+patientId] = false; renderContent();
+    state.loading['notif_'+patientId] = false;
+    state['notifSent_'+patientId] = true;
+    renderContent();
+    setTimeout(() => { state['notifSent_'+patientId] = false; renderContent(); }, 2500);
+  } catch(e) {
+    state.loading['notif_'+patientId] = false;
+    renderContent();
+    alert('Could not send message: ' + e.message);
+  }
 }
 
 async function suggestPrescription(patientId) {
@@ -1129,15 +1137,24 @@ async function escalateTask(taskId) { try { await api(`/tasks/${taskId}/escalate
 async function resolveAlert(alertId) { try { await api(`/alerts/${alertId}/resolve`, 'POST'); await fetchAllData(); state.selectedAlert=null; renderTabs(); renderSidebar(); renderContent(); } catch(e){} }
 
 async function issuePrescription(patientId) {
+  const wasUpdate = !!getActivePrescription(patientId);
   const med = (document.getElementById('docRxMed') || document.getElementById('manRxMed')).value.trim();
   const dose = (document.getElementById('docRxDose') || document.getElementById('manRxDose')).value.trim();
+  const instr = (document.getElementById('docRxInstr') || document.getElementById('manRxInstr'))?.value.trim() || '';
   if (!med || !dose) return;
   state.loading['docRx_'+patientId] = true; renderContent();
   try {
-    await api('/prescriptions', 'POST', { patient_id: patientId, medication_name: med, dosage: dose });
+    await api('/prescriptions', 'POST', { patient_id: patientId, medication_name: med, dosage: dose, instructions: instr || undefined });
     await fetchAllData();
-  } catch(e) {}
-  state.loading['docRx_'+patientId] = false; renderTabs(); renderSidebar(); renderContent();
+    state.loading['docRx_'+patientId] = false;
+    state['rxDone_'+patientId] = true;
+    renderTabs(); renderSidebar(); renderContent();
+    setTimeout(() => { state['rxDone_'+patientId] = false; renderContent(); }, 2500);
+  } catch(e) {
+    state.loading['docRx_'+patientId] = false;
+    renderTabs(); renderSidebar(); renderContent();
+    alert('Could not ' + (wasUpdate ? 'update' : 'issue') + ' prescription: ' + e.message);
+  }
 }
 
 async function deepAnalysis(patientId, alertId) {
@@ -1466,12 +1483,23 @@ function renderContent() {
   else renderDoctorView(el);
 }
 
-// ── Calendar (doctor working schedule: available / booked / lunch / blocked) ──
+// ── Calendar (working schedule: available / booked / lunch / blocked) ──
+// Doctors always see + edit their own calendar. CHWs have their own,
+// completely independent calendar (editable) and can toggle to a read-only
+// peek at their supervising doctor's calendar to find a free slot before
+// requesting a doctor visit.
 
-function openCalendarView() {
+function openCalendarView(initialView) {
   state.selectedPatient = null; state.selectedTask = null; state.selectedAlert = null;
   state.viewMode = 'calendar'; state.calSlotBooking = null;
+  state.calendarView = initialView === 'doctor' ? 'doctor' : 'mine';
   renderSidebar(); renderContent();
+  loadCalendarDay(state.calendarDate);
+}
+
+function switchCalendarView(view) {
+  state.calendarView = view; state.calSlotBooking = null;
+  state.showDoctorSettings = false; state.showAddBreak = false;
   loadCalendarDay(state.calendarDate);
 }
 
@@ -1481,10 +1509,13 @@ async function loadCalendarDay(dateStr) {
   try {
     const sess = getSession();
     let url = `/calendar/${dateStr}`;
-    // CHWs implicitly resolve to their supervising doctor server-side; doctors to themselves.
+    if (sess.role === 'chw' && state.calendarView === 'doctor') url += '?view=doctor';
     state.calendarDay = await api(url);
-    if (sess.role === 'doctor' && !state.docSettings) {
-      try { state.docSettings = await api('/doctors/me/settings'); } catch(e) {}
+    // Only fetch settings for a calendar the current user actually owns/edits.
+    if (state.calendarDay && state.calendarDay.editable && !state.mySettings) {
+      try {
+        state.mySettings = await api(sess.role === 'doctor' ? '/doctors/me/settings' : '/chws/me/settings');
+      } catch(e) {}
     }
   } catch(e) {
     state.calendarDay = null;
@@ -1509,19 +1540,28 @@ function slotStatusMeta(status) {
 
 function renderCalendarView(el) {
   const sess = getSession();
-  const isDoctor = sess.role === 'doctor';
+  const isChw = sess.role === 'chw';
   const day = state.calendarDay;
+  const editable = !!(day && day.editable);
   const quickDates = [0,1,7,15,30].map(n => addDaysToDateStr(todayStr(), n));
+  const ownerLabel = day
+    ? (editable ? 'My Calendar' : `${day.owner_name ? "Dr. " + day.owner_name : "Doctor"}'s Calendar (view only)`)
+    : '';
 
   el.innerHTML = `
     <div class="card">
       <div class="flex-between" style="margin-bottom:.75rem">
         <div class="card-title" style="margin:0">📅 Calendar${day?` — ${new Date(state.calendarDate+'T00:00:00').toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}`:''}</div>
-        ${isDoctor ? `<div class="flex" style="gap:6px">
+        ${editable ? `<div class="flex" style="gap:6px">
           <button class="btn btn-small" onclick="state.showAddBreak=true;state.showDoctorSettings=false;renderContent()">🚫 Block time</button>
           <button class="btn btn-small" onclick="state.showDoctorSettings=true;state.showAddBreak=false;renderContent()">⚙ Working hours</button>
         </div>` : ''}
       </div>
+      ${isChw ? `<div class="flex" style="gap:6px;margin-bottom:.75rem">
+        <button class="btn btn-small ${state.calendarView==='mine'?'btn-primary':''}" onclick="switchCalendarView('mine')">🧑‍⚕️ My Calendar</button>
+        <button class="btn btn-small ${state.calendarView==='doctor'?'btn-primary':''}" onclick="switchCalendarView('doctor')">👁 Doctor's Calendar</button>
+      </div>` : ''}
+      ${day ? `<div class="muted" style="font-size:12px;margin-bottom:.5rem">${ownerLabel}</div>` : ''}
       <div class="flex" style="gap:6px;margin-bottom:.75rem;flex-wrap:wrap;align-items:center">
         <button class="btn btn-small" onclick="shiftCalendarDate(-1)">← Prev</button>
         ${quickDates.map(d => `<button class="btn btn-small ${state.calendarDate===d?'btn-primary':''}" onclick="goToCalendarDate('${d}')">${fmtDayLabel(d)}</button>`).join('')}
@@ -1534,7 +1574,7 @@ function renderCalendarView(el) {
     <div class="card">
       ${state.loading.calendar ? `<div class="muted"><span class="spinner"></span> Loading schedule…</div>` :
         !day ? `<div class="muted">Could not load the calendar for this date.</div>` :
-        day.slots.length === 0 ? `<div class="muted">Doctor is not working on this day.</div>` :
+        day.slots.length === 0 ? `<div class="muted">${editable ? "You are" : "Doctor is"} not working on this day.</div>` :
         renderSlotGrid(day)
       }
     </div>
@@ -1543,15 +1583,16 @@ function renderCalendarView(el) {
 }
 
 function renderSlotGrid(day) {
+  const editable = !!day.editable;
   return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">
     ${day.slots.map(s => {
       const meta = slotStatusMeta(s.status);
-      const clickable = s.status === 'available';
+      const clickable = editable && s.status === 'available';
       const canOpenPatient = s.status === 'booked' && s.patient_id && db.patients.some(p => p.id === s.patient_id);
       return `<div style="border-radius:8px;padding:8px 10px;background:${meta.bg};border:${clickable?'1px dashed':'0.5px solid'} ${meta.color}22;cursor:${clickable||canOpenPatient?'pointer':'default'}"
         onclick="${clickable ? `openSlotBooking('${s.time}')` : (canOpenPatient ? `state.viewMode=null;state.selectedPatient=${s.patient_id};state.providerPatientTab='visits';renderSidebar();renderContent()` : '')}">
         <div class="flex-between"><span style="font-size:13px;font-weight:600;color:${meta.color}">${s.time}</span><span class="badge" style="background:transparent;color:${meta.color};padding:0;font-size:10px">${meta.label}</span></div>
-        <div style="font-size:11px;color:${meta.color};margin-top:2px">${s.label || (clickable ? 'Tap to book' : '')}</div>
+        <div style="font-size:11px;color:${meta.color};margin-top:2px">${s.label || (clickable ? 'Tap to book' : (s.status==='available' ? 'Free' : ''))}</div>
       </div>`;
     }).join('')}
   </div>`;
@@ -1623,7 +1664,7 @@ async function confirmSlotBooking() {
 }
 
 function renderDoctorSettingsPanel() {
-  const s = state.docSettings || { working_start:'09:00', working_end:'17:00', lunch_start:'12:00', lunch_end:'14:00', slot_minutes:30, working_days:[0,1,2,3,4,5] };
+  const s = state.mySettings || { working_start:'09:00', working_end:'17:00', lunch_start:'12:00', lunch_end:'14:00', slot_minutes:30, working_days:[0,1,2,3,4,5] };
   const dayLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   return `<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:.75rem">
     <div class="form-label" style="margin-bottom:8px">Working Hours</div>
@@ -1642,16 +1683,19 @@ function renderDoctorSettingsPanel() {
       </div>
     </div>
     <div class="flex" style="gap:8px">
-      <button class="btn btn-primary" onclick="saveDoctorSettings()">Save</button>
+      <button class="btn btn-primary" onclick="saveDoctorSettings()">${state.loading.savingSettings?'<span class="spinner"></span>Saving...':'Save'}</button>
       <button class="btn" onclick="state.showDoctorSettings=false;renderContent()">Cancel</button>
     </div>
   </div>`;
 }
 
 async function saveDoctorSettings() {
+  const sess = getSession();
   const workingDays = Array.from(document.querySelectorAll('.dsDay:checked')).map(el=>parseInt(el.value));
+  const endpoint = sess.role === 'doctor' ? '/doctors/me/settings' : '/chws/me/settings';
+  state.loading.savingSettings = true; renderContent();
   try {
-    state.docSettings = await api('/doctors/me/settings', 'PUT', {
+    state.mySettings = await api(endpoint, 'PUT', {
       working_start: document.getElementById('dsStart').value,
       working_end: document.getElementById('dsEnd').value,
       lunch_start: document.getElementById('dsLunchStart').value,
@@ -1660,8 +1704,13 @@ async function saveDoctorSettings() {
       working_days: workingDays
     });
     state.showDoctorSettings = false;
+    state.loading.savingSettings = false;
     await loadCalendarDay(state.calendarDate);
-  } catch(e) { alert('Failed to save: ' + e.message); }
+  } catch(e) {
+    state.loading.savingSettings = false;
+    renderContent();
+    alert('Failed to save: ' + e.message);
+  }
 }
 
 function renderAddBreakPanel() {
@@ -1670,25 +1719,33 @@ function renderAddBreakPanel() {
     <div class="grid3" style="margin-bottom:8px">
       <div><div class="form-label">Start</div><input type="text" id="brkStart" placeholder="15:00"></div>
       <div><div class="form-label">End</div><input type="text" id="brkEnd" placeholder="16:00"></div>
-      <div><div class="form-label">Reason</div><select id="brkReason"><option>Conference</option><option>Emergency</option><option>Ward Round</option><option>Personal</option><option>Custom</option></select></div>
+      <div><div class="form-label">Reason</div><select id="brkReason"><option>Conference</option><option>Emergency</option><option>Ward Round</option><option>Home Visit</option><option>Personal</option><option>Custom</option></select></div>
     </div>
     <div class="flex" style="gap:8px">
-      <button class="btn btn-primary" onclick="saveDoctorBreak()">Block</button>
+      <button class="btn btn-primary" onclick="saveDoctorBreak()">${state.loading.savingBreak?'<span class="spinner"></span>Blocking...':'Block'}</button>
       <button class="btn" onclick="state.showAddBreak=false;renderContent()">Cancel</button>
     </div>
   </div>`;
 }
 
 async function saveDoctorBreak() {
+  const sess = getSession();
   const start = document.getElementById('brkStart')?.value?.trim();
   const end = document.getElementById('brkEnd')?.value?.trim();
   const reason = document.getElementById('brkReason')?.value || 'Blocked';
   if (!start || !end) { alert('Enter start and end time (HH:MM)'); return; }
+  const endpoint = sess.role === 'doctor' ? '/doctors/me/breaks' : '/chws/me/breaks';
+  state.loading.savingBreak = true; renderContent();
   try {
-    await api('/doctors/me/breaks', 'POST', { date: state.calendarDate, start_time: start, end_time: end, reason });
+    await api(endpoint, 'POST', { date: state.calendarDate, start_time: start, end_time: end, reason });
     state.showAddBreak = false;
+    state.loading.savingBreak = false;
     await loadCalendarDay(state.calendarDate);
-  } catch(e) { alert('Failed: ' + e.message); }
+  } catch(e) {
+    state.loading.savingBreak = false;
+    renderContent();
+    alert('Failed: ' + e.message);
+  }
 }
 
 // ── Patient Rendering ────────────────────────────────────────────────────────
@@ -1973,7 +2030,7 @@ function renderTaskDetail(t) {
       ${t.chw_validated?`<div class="chw-label">✓ CHW validated note</div><div class="chw-block">${t.chw_validated_note}</div>`:`<div class="form-label">Your validation note (after calling patient)</div><textarea id="chwNote" rows="3" placeholder="e.g. Called patient. Confirmed trembling…" style="margin-bottom:8px"></textarea><button class="btn btn-primary" onclick="validateTask(${t.id})" style="margin-bottom:.75rem">${state.loading['validate_'+t.id]?'<span class="spinner"></span>Saving...':'✓ Save validation'}</button>`}
       <hr class="sep">
       <div class="form-label" style="color:#0F6E56">Schedule / Request Visit</div>
-      <button class="btn btn-small" style="margin-bottom:6px" onclick="openCalendarView()">📅 Check doctor's calendar first</button>
+      <button class="btn btn-small" style="margin-bottom:6px" onclick="openCalendarView('doctor')">📅 Check doctor's calendar first</button>
       ${renderVisitFormFields('v_')}
       <div class="flex" style="gap:8px;margin-bottom:.75rem"><button class="btn btn-blue" onclick="scheduleVisit(${t.patient_id},false,'v_')" style="flex:1">📅 Schedule Visit</button><button class="btn btn-amber" onclick="requestDoctorVisit(${t.patient_id})" style="flex:1">⬆ Request Doctor Appointment</button></div>
       <hr class="sep"><div class="form-label">Send message to patient</div><textarea id="notifMsg" rows="2" placeholder="e.g. Ramesh ji, please check sugar…" style="margin-bottom:8px"></textarea><button class="btn" onclick="sendNotification(${t.patient_id})" style="margin-bottom:.75rem">${state.loading['notif_'+t.patient_id]?'<span class="spinner"></span>Sending...':'📲 Send message to patient'}</button>
@@ -2215,7 +2272,7 @@ function renderProviderVisitsTab(p, sess) {
     ${vReqs.filter(r=>r.status!=='Completed').length>0?`<div class="info-banner" style="margin-bottom:12px"><span>📋</span><span>Visit request pending response</span></div>`:''}
     <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px">
       <div class="form-label" style="color:#0F6E56;margin-bottom:8px">+ New Visit</div>
-      ${sess.role==='chw'?`<button class="btn btn-small" style="margin-bottom:6px" onclick="openCalendarView()">📅 Check doctor's calendar first</button>`:''}
+      ${sess.role==='chw'?`<button class="btn btn-small" style="margin-bottom:6px" onclick="openCalendarView('doctor')">📅 Check doctor's calendar first</button>`:''}
       ${renderVisitFormFields('pv_')}
       <div class="flex" style="gap:8px"><button class="btn btn-primary" onclick="scheduleVisitFromProfile(${p.id})" style="flex:1">📅 ${sess.role==='doctor'?'Schedule & notify patient+CHW':'Schedule visit'}</button>${sess.role==='chw'?`<button class="btn btn-amber" onclick="requestDoctorVisitFromProfile(${p.id})" style="flex:1">⬆ Request Doctor Visit</button>`:''}</div>
     </div>
@@ -2347,7 +2404,13 @@ function renderProviderHistoryTab(p, logs) {
 }
 
 function renderDoctorManageTab(p, rx) {
-  return `<div class="form-label" style="margin-bottom:8px;color:#0F6E56">Issue Prescription</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Medication</div><input type="text" id="manRxMed" placeholder="e.g. Metformin 1000mg" value="${rx?rx.medication_name:''}"></div><div><div class="form-label">Dosage</div><input type="text" id="manRxDose" value="${rx?rx.dosage:''}"></div></div><input type="text" id="manRxInstr" placeholder="Instructions..." value="${rx?.instructions||''}" style="margin-bottom:8px"><button class="btn btn-primary" onclick="issuePrescription(${p.id})" style="margin-bottom:.75rem;width:100%">💊 Issue prescription → notifies patient + CHW</button><hr class="sep"><div class="form-label" style="margin-bottom:8px;color:#0F6E56">Send Message to Patient</div><textarea id="notifMsg" rows="2" placeholder="Type message..." style="margin-bottom:8px"></textarea><button class="btn btn-blue" onclick="sendNotification(${p.id})">📲 Send message</button><hr class="sep"><div class="form-label" style="margin-bottom:8px;color:#0F6E56">AI Trend Check</div><button class="btn" onclick="runTrendCheck(${p.id})" style="width:100%">${state.loading['trend_'+p.id]?'<span class="spinner"></span>Checking...':'🤖 Run AI trend check'}</button>${state['trendResult_'+p.id]?`<div class="ai-block" style="margin-top:8px">${state['trendResult_'+p.id]}</div>`:''}`;
+  const rxLabel = state.loading['docRx_'+p.id] ? '<span class="spinner"></span>' + (rx?'Updating...':'Issuing...')
+    : state['rxDone_'+p.id] ? '✅ Updated'
+    : '💊 Issue prescription → notifies patient + CHW';
+  const msgLabel = state.loading['notif_'+p.id] ? '<span class="spinner"></span>Sending...'
+    : state['notifSent_'+p.id] ? '✅ Sent'
+    : '📲 Send message';
+  return `<div class="form-label" style="margin-bottom:8px;color:#0F6E56">Issue Prescription</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Medication</div><input type="text" id="manRxMed" placeholder="e.g. Metformin 1000mg" value="${rx?rx.medication_name:''}"></div><div><div class="form-label">Dosage</div><input type="text" id="manRxDose" value="${rx?rx.dosage:''}"></div></div><input type="text" id="manRxInstr" placeholder="Instructions..." value="${rx?.instructions||''}" style="margin-bottom:8px"><button class="btn btn-primary" onclick="issuePrescription(${p.id})" style="margin-bottom:.75rem;width:100%">${rxLabel}</button><hr class="sep"><div class="form-label" style="margin-bottom:8px;color:#0F6E56">Send Message to Patient</div><textarea id="notifMsg" rows="2" placeholder="Type message..." style="margin-bottom:8px"></textarea><button class="btn btn-blue" onclick="sendNotification(${p.id})">${msgLabel}</button><hr class="sep"><div class="form-label" style="margin-bottom:8px;color:#0F6E56">AI Trend Check</div><button class="btn" onclick="runTrendCheck(${p.id})" style="width:100%">${state.loading['trend_'+p.id]?'<span class="spinner"></span>Checking...':'🤖 Run AI trend check'}</button>${state['trendResult_'+p.id]?`<div class="ai-block" style="margin-top:8px">${state['trendResult_'+p.id]}</div>`:''}`;
 }
 </script>
 </body>
