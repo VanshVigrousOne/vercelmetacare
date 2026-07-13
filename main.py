@@ -56,6 +56,24 @@ logger.propagate = False
 # Create all tables on startup
 Base.metadata.create_all(bind=engine)
 
+# ---------------------------------------------------------------------------
+# Lightweight SQLite auto-migration: create_all() won't add new columns to
+# tables that already exist on disk, so patch them in here if missing.
+# ---------------------------------------------------------------------------
+def _run_sqlite_migrations():
+    try:
+        with engine.connect() as conn:
+            cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(clinic_visits)").fetchall()]
+            if "duration_minutes" not in cols:
+                conn.exec_driver_sql("ALTER TABLE clinic_visits ADD COLUMN duration_minutes INTEGER DEFAULT 30")
+            if "meeting_id" not in cols:
+                conn.exec_driver_sql("ALTER TABLE clinic_visits ADD COLUMN meeting_id VARCHAR")
+            conn.commit()
+    except Exception as exc:
+        logger.warning(f"Skipping sqlite migration check: {exc}")
+
+_run_sqlite_migrations()
+
 app = FastAPI(
     title="MetaCare API",
     description="Rural diabetes management — Patient · CHW · Doctor",
@@ -1052,23 +1070,37 @@ def accept_visit(
             reason=alert.alert_reason,
         )
         db.add(visit)
+        db.flush()
+
+    ok, err = check_slot_available(
+        db, doctor.id, payload.visit_date, payload.duration_minutes,
+        exclude_visit_id=visit.id if visit.id else None,
+    )
+    if not ok:
+        raise HTTPException(status_code=409, detail=err)
 
     visit.visit_date = payload.visit_date
     visit.status = "Scheduled"
     visit.doctor_accepted = True
     visit.chw_notified_acceptance = True
+    visit.duration_minutes = payload.duration_minutes
     if payload.notes:
         visit.reason = (visit.reason or "") + f" | Tests: {payload.notes}"
+    if visit.visit_type == "Teleconsultation" and payload.meeting_id:
+        visit.meeting_id = payload.meeting_id
 
     alert.visit_request_status = "Accepted"
     alert.is_resolved = True
 
     # Notify patient
+    accept_msg = f"Dr. {doctor.name} ne aapka clinic visit confirm kar diya hai: {payload.visit_date.strftime('%d %b %Y')}."
+    if visit.meeting_link:
+        accept_msg += f" Join link: {visit.meeting_link}"
     db.add(models.Notification(
         patient_id=alert.patient_id,
         sent_by="Doctor",
         sent_by_name=doctor.name,
-        message=f"Dr. {doctor.name} ne aapka clinic visit confirm kar diya hai: {payload.visit_date.strftime('%d %b %Y')}.",
+        message=accept_msg,
         notif_type="visit_accepted",
     ))
 
@@ -1302,6 +1334,256 @@ def raw_ai(payload: RawAIRequest, doctor: models.Doctor = Depends(auth.require_d
 
 
 
+# ---------------------------------------------------------------------------
+# SCHEDULING ENGINE
+#
+# Every doctor has a working schedule (DoctorSettings): working hours, a
+# lunch window, a slot size (default 30 min) and working days. On top of
+# that, one-off DoctorBreak rows block specific time ranges (conference,
+# ward round, etc). A slot is available only if it's inside working hours,
+# outside lunch, outside any break, and not already covered by another
+# non-cancelled visit. This logic is shared by the calendar view and by
+# every endpoint that creates/accepts/moves a visit.
+# ---------------------------------------------------------------------------
+
+from datetime import timedelta
+
+
+def _time_to_minutes(t: str) -> int:
+    h, m = t.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _minutes_to_time(m: int) -> str:
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def get_or_create_doctor_settings(db: Session, doctor_id: int) -> models.DoctorSettings:
+    settings = db.query(models.DoctorSettings).filter(models.DoctorSettings.doctor_id == doctor_id).first()
+    if not settings:
+        settings = models.DoctorSettings(doctor_id=doctor_id)
+        db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+def check_slot_available(db: Session, doctor_id: int, visit_dt: datetime, duration_minutes: int,
+                          exclude_visit_id: Optional[int] = None):
+    """Returns (ok: bool, error_message: Optional[str])."""
+    settings = get_or_create_doctor_settings(db, doctor_id)
+    weekday = visit_dt.weekday()
+    if weekday not in (settings.working_days or []):
+        return False, "Doctor is not working on this day."
+
+    start = _time_to_minutes(settings.working_start)
+    end = _time_to_minutes(settings.working_end)
+    lunch_start = _time_to_minutes(settings.lunch_start)
+    lunch_end = _time_to_minutes(settings.lunch_end)
+    req_start = visit_dt.hour * 60 + visit_dt.minute
+    req_end = req_start + duration_minutes
+
+    if req_start < start or req_end > end:
+        return False, f"Doctor's working hours are {settings.working_start}-{settings.working_end}."
+
+    if req_start < lunch_end and req_end > lunch_start:
+        return False, f"Doctor is on Lunch Break ({settings.lunch_start}-{settings.lunch_end})."
+
+    date_str = visit_dt.strftime("%Y-%m-%d")
+    breaks = db.query(models.DoctorBreak).filter(
+        models.DoctorBreak.doctor_id == doctor_id, models.DoctorBreak.date == date_str
+    ).all()
+    for b in breaks:
+        b_start = _time_to_minutes(b.start_time)
+        b_end = _time_to_minutes(b.end_time)
+        if req_start < b_end and req_end > b_start:
+            return False, f"Doctor has a blocked period ({b.reason}) at this time."
+
+    day_start_dt = datetime.combine(visit_dt.date(), datetime.min.time())
+    day_end_dt = day_start_dt + timedelta(days=1)
+    q = (
+        db.query(models.ClinicVisit)
+        .join(models.Patient, models.ClinicVisit.patient_id == models.Patient.id)
+        .filter(
+            models.Patient.doctor_id == doctor_id,
+            models.ClinicVisit.visit_date >= day_start_dt,
+            models.ClinicVisit.visit_date < day_end_dt,
+            models.ClinicVisit.status != "Cancelled",
+        )
+    )
+    if exclude_visit_id:
+        q = q.filter(models.ClinicVisit.id != exclude_visit_id)
+    for v in q.all():
+        if not v.visit_date:
+            continue
+        v_start = v.visit_date.hour * 60 + v.visit_date.minute
+        v_end = v_start + (v.duration_minutes or 30)
+        if req_start < v_end and req_end > v_start:
+            return False, "Doctor already has an appointment at this time."
+
+    return True, None
+
+
+def build_calendar_day(db: Session, doctor_id: int, day) -> schemas.CalendarDayOut:
+    settings = get_or_create_doctor_settings(db, doctor_id)
+    date_str = day.strftime("%Y-%m-%d")
+    weekday = day.weekday()
+    slot_min = settings.slot_minutes or 30
+
+    if weekday not in (settings.working_days or []):
+        return schemas.CalendarDayOut(date=date_str, slot_minutes=slot_min, slots=[])
+
+    start = _time_to_minutes(settings.working_start)
+    end = _time_to_minutes(settings.working_end)
+    lunch_start = _time_to_minutes(settings.lunch_start)
+    lunch_end = _time_to_minutes(settings.lunch_end)
+
+    day_start_dt = datetime.combine(day, datetime.min.time())
+    day_end_dt = day_start_dt + timedelta(days=1)
+    visits = (
+        db.query(models.ClinicVisit)
+        .join(models.Patient, models.ClinicVisit.patient_id == models.Patient.id)
+        .filter(
+            models.Patient.doctor_id == doctor_id,
+            models.ClinicVisit.visit_date >= day_start_dt,
+            models.ClinicVisit.visit_date < day_end_dt,
+            models.ClinicVisit.status != "Cancelled",
+        )
+        .all()
+    )
+    breaks = db.query(models.DoctorBreak).filter(
+        models.DoctorBreak.doctor_id == doctor_id, models.DoctorBreak.date == date_str
+    ).all()
+
+    slots: List[schemas.CalendarSlot] = []
+    t = start
+    while t < end:
+        status_, label, visit_id, patient_id, patient_name, visit_type, break_id, reason = (
+            "available", None, None, None, None, None, None, None
+        )
+
+        if lunch_start <= t < lunch_end:
+            status_, label = "lunch", "Lunch Break"
+        else:
+            for b in breaks:
+                if _time_to_minutes(b.start_time) <= t < _time_to_minutes(b.end_time):
+                    status_, label, break_id, reason = "blocked", b.reason, b.id, b.reason
+                    break
+            if status_ == "available":
+                for v in visits:
+                    if not v.visit_date:
+                        continue
+                    v_start = v.visit_date.hour * 60 + v.visit_date.minute
+                    v_dur = v.duration_minutes or 30
+                    if v_start <= t < v_start + v_dur:
+                        patient = db.query(models.Patient).filter(models.Patient.id == v.patient_id).first()
+                        patient_name = patient.name if patient else None
+                        status_, label = "booked", patient_name
+                        visit_id, patient_id, visit_type = v.id, v.patient_id, v.visit_type
+                        break
+
+        slots.append(schemas.CalendarSlot(
+            time=_minutes_to_time(t), status=status_, label=label, visit_id=visit_id,
+            patient_id=patient_id, patient_name=patient_name, visit_type=visit_type,
+            break_id=break_id, reason=reason,
+        ))
+        t += slot_min
+
+    return schemas.CalendarDayOut(date=date_str, slot_minutes=slot_min, slots=slots)
+
+
+def _resolve_doctor_id_for_calendar(role: str, user) -> int:
+    if role == "doctor":
+        return user.id
+    if role == "chw":
+        return user.doctor_id
+    raise HTTPException(status_code=403, detail="Only doctors and CHWs can view the calendar")
+
+
+# ── Doctor working hours / lunch / slot size ────────────────────────────────
+
+@app.get("/doctors/me/settings", response_model=schemas.DoctorSettingsOut, tags=["Calendar"])
+def get_my_doctor_settings(doctor: models.Doctor = Depends(auth.require_doctor), db: Session = Depends(get_db)):
+    return get_or_create_doctor_settings(db, doctor.id)
+
+
+@app.put("/doctors/me/settings", response_model=schemas.DoctorSettingsOut, tags=["Calendar"])
+def update_my_doctor_settings(
+    payload: schemas.DoctorSettingsUpdate,
+    doctor: models.Doctor = Depends(auth.require_doctor),
+    db: Session = Depends(get_db),
+):
+    settings = get_or_create_doctor_settings(db, doctor.id)
+    for key, value in payload.dict(exclude_unset=True).items():
+        setattr(settings, key, value)
+    db.commit()
+    db.refresh(settings)
+    return settings
+
+
+# ── Dynamic breaks (block time) ─────────────────────────────────────────────
+
+@app.post("/doctors/me/breaks", response_model=schemas.DoctorBreakOut, tags=["Calendar"])
+def create_doctor_break(
+    payload: schemas.DoctorBreakCreate,
+    doctor: models.Doctor = Depends(auth.require_doctor),
+    db: Session = Depends(get_db),
+):
+    brk = models.DoctorBreak(doctor_id=doctor.id, **payload.dict())
+    db.add(brk)
+    db.commit()
+    db.refresh(brk)
+    return brk
+
+
+@app.get("/doctors/me/breaks", response_model=List[schemas.DoctorBreakOut], tags=["Calendar"])
+def list_doctor_breaks(
+    date: Optional[str] = None,
+    doctor: models.Doctor = Depends(auth.require_doctor),
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.DoctorBreak).filter(models.DoctorBreak.doctor_id == doctor.id)
+    if date:
+        q = q.filter(models.DoctorBreak.date == date)
+    return q.all()
+
+
+@app.delete("/doctors/me/breaks/{break_id}", tags=["Calendar"])
+def delete_doctor_break(
+    break_id: int,
+    doctor: models.Doctor = Depends(auth.require_doctor),
+    db: Session = Depends(get_db),
+):
+    brk = db.query(models.DoctorBreak).filter(models.DoctorBreak.id == break_id).first()
+    if not brk or brk.doctor_id != doctor.id:
+        raise HTTPException(status_code=404, detail="Break not found")
+    db.delete(brk)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Calendar day view (available / booked / lunch / blocked slots) ─────────
+
+@app.get("/calendar/{date}", response_model=schemas.CalendarDayOut, tags=["Calendar"])
+def get_calendar_day(
+    date: str,
+    doctor_id: Optional[int] = None,
+    current=Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """date is 'YYYY-MM-DD'. Doctors always see their own calendar; CHWs see
+    the doctor they report to (or pass doctor_id explicitly if needed)."""
+    role, user = current
+    resolved_doctor_id = doctor_id or _resolve_doctor_id_for_calendar(role, user)
+    if role == "chw" and doctor_id and doctor_id != user.doctor_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        day = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    return build_calendar_day(db, resolved_doctor_id, day)
+
+
 # CLINIC VISITS
 
 
@@ -1317,13 +1599,89 @@ def create_visit(payload: schemas.VisitCreate, db: Session = Depends(get_db), cu
     if role == "doctor" and patient.doctor_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    ok, err = check_slot_available(db, patient.doctor_id, payload.visit_date, payload.duration_minutes)
+    if not ok:
+        raise HTTPException(status_code=409, detail=err)
+
     visit = models.ClinicVisit(
         patient_id=payload.patient_id, scheduled_by=role.upper(),
         scheduled_by_name=user.name, visit_type=payload.visit_type,
-        visit_date=payload.visit_date, reason=payload.reason, status="Scheduled"
+        visit_date=payload.visit_date, reason=payload.reason, status="Scheduled",
+        duration_minutes=payload.duration_minutes,
+        meeting_id=payload.meeting_id if payload.visit_type == "Teleconsultation" else None,
     )
-    db.add(visit);
-    db.commit();
+    db.add(visit)
+    db.commit()
+    db.refresh(visit)
+
+    visit_msg = f"Aapka {payload.visit_type} clinic visit schedule ho gaya hai: {payload.visit_date.strftime('%d %b %Y, %I:%M %p')}."
+    if visit.meeting_link:
+        visit_msg += f" Join link: {visit.meeting_link}"
+    db.add(models.Notification(
+        patient_id=payload.patient_id,
+        sent_by=role.upper(), sent_by_name=user.name,
+        message=visit_msg,
+        notif_type="visit",
+    ))
+    if role == "doctor":
+        db.add(models.Notification(
+            patient_id=payload.patient_id, sent_by="System", sent_by_name="MetaCare",
+            message=f"CHW ko bhi is visit ki jaankari de di gayi hai.", notif_type="visit",
+        ))
+    db.commit()
+    return visit
+
+
+@app.post("/visits/{visit_id}/follow-up", response_model=schemas.VisitOut, tags=["Visits"])
+def schedule_follow_up(
+    visit_id: int,
+    payload: schemas.FollowUpCreate,
+    db: Session = Depends(get_db),
+    current=Depends(auth.get_current_user),
+):
+    """Quick 'Schedule Follow-up' action off an existing visit — e.g. one week later."""
+    role, user = current
+    if role not in ("chw", "doctor"):
+        raise HTTPException(status_code=403, detail="CHW or Doctor only")
+    source = db.query(models.ClinicVisit).filter(models.ClinicVisit.id == visit_id).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Visit not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == source.patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    if role == "chw" and patient.chw_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "doctor" and patient.doctor_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    base_date = (source.visit_date or datetime.utcnow()) + timedelta(days=payload.offset_days)
+    if payload.visit_time:
+        hh, mm = payload.visit_time.split(":")
+        base_date = base_date.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+
+    ok, err = check_slot_available(db, patient.doctor_id, base_date, payload.duration_minutes)
+    if not ok:
+        raise HTTPException(status_code=409, detail=err)
+
+    visit = models.ClinicVisit(
+        patient_id=patient.id, scheduled_by=role.upper(), scheduled_by_name=user.name,
+        visit_type=payload.visit_type, visit_date=base_date,
+        reason=payload.reason or f"Follow-up to visit #{source.id}",
+        status="Scheduled", duration_minutes=payload.duration_minutes,
+        meeting_id=payload.meeting_id if payload.visit_type == "Teleconsultation" else None,
+    )
+    db.add(visit)
+    db.flush()
+
+    followup_msg = f"Follow-up visit schedule ho gaya hai: {base_date.strftime('%d %b %Y, %I:%M %p')}."
+    if visit.meeting_link:
+        followup_msg += f" Join link: {visit.meeting_link}"
+    db.add(models.Notification(
+        patient_id=patient.id, sent_by=role.upper(), sent_by_name=user.name,
+        message=followup_msg,
+        notif_type="visit",
+    ))
+    db.commit()
     db.refresh(visit)
     return visit
 
@@ -1367,7 +1725,29 @@ def update_visit(
         raise HTTPException(status_code=403, detail="Forbidden")
     if role == "doctor" and (not patient or patient.doctor_id != user.id):
         raise HTTPException(status_code=403, detail="Forbidden")
-    for key, value in payload.dict(exclude_unset=True).items():
+
+    update_data = payload.dict(exclude_unset=True)
+
+    # --- SCHEDULING VALIDATION FOR RESCHEDULING ---
+    new_date = update_data.get("visit_date", visit.visit_date)
+    new_duration = update_data.get("duration_minutes", visit.duration_minutes or 30)
+
+    if "visit_date" in update_data or "duration_minutes" in update_data:
+        if new_date:  # don't pass None to the validator
+            ok, err = check_slot_available(
+                db,
+                patient.doctor_id,
+                new_date,
+                new_duration,
+                exclude_visit_id=visit.id,  # visit doesn't conflict with its own old slot
+            )
+            if not ok:
+                raise HTTPException(status_code=409, detail=err)
+
+    if "meeting_id" in update_data and visit.visit_type != "Teleconsultation":
+        update_data.pop("meeting_id")  # meeting IDs only apply to Teleconsultation visits
+
+    for key, value in update_data.items():
         setattr(visit, key, value)
     db.commit()
     db.refresh(visit)
