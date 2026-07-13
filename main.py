@@ -57,22 +57,41 @@ logger.propagate = False
 Base.metadata.create_all(bind=engine)
 
 # ---------------------------------------------------------------------------
-# Lightweight SQLite auto-migration: create_all() won't add new columns to
-# tables that already exist on disk, so patch them in here if missing.
+# Lightweight auto-migration (SQLite + Postgres): create_all() won't add new
+# columns to tables that already exist, so patch them in here if missing.
+# Works against both dialects — SQLite (local/dev fallback) and Postgres
+# (Neon, in production) — since the two use different introspection syntax.
 # ---------------------------------------------------------------------------
-def _run_sqlite_migrations():
+def _run_auto_migrations():
     try:
         with engine.connect() as conn:
-            cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(clinic_visits)").fetchall()]
+            is_sqlite = engine.dialect.name == "sqlite"
+            if is_sqlite:
+                cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(clinic_visits)").fetchall()]
+            else:
+                cols = [
+                    row[0] for row in conn.exec_driver_sql(
+                        "SELECT column_name FROM information_schema.columns WHERE table_name = 'clinic_visits'"
+                    ).fetchall()
+                ]
+
             if "duration_minutes" not in cols:
-                conn.exec_driver_sql("ALTER TABLE clinic_visits ADD COLUMN duration_minutes INTEGER DEFAULT 30")
+                stmt = "ALTER TABLE clinic_visits ADD COLUMN " + (
+                    "duration_minutes INTEGER DEFAULT 30" if is_sqlite
+                    else "IF NOT EXISTS duration_minutes INTEGER DEFAULT 30"
+                )
+                conn.exec_driver_sql(stmt)
             if "meeting_id" not in cols:
-                conn.exec_driver_sql("ALTER TABLE clinic_visits ADD COLUMN meeting_id VARCHAR")
+                stmt = "ALTER TABLE clinic_visits ADD COLUMN " + (
+                    "meeting_id VARCHAR" if is_sqlite
+                    else "IF NOT EXISTS meeting_id VARCHAR"
+                )
+                conn.exec_driver_sql(stmt)
             conn.commit()
     except Exception as exc:
-        logger.warning(f"Skipping sqlite migration check: {exc}")
+        logger.warning(f"Skipping auto-migration check: {exc}")
 
-_run_sqlite_migrations()
+_run_auto_migrations()
 
 app = FastAPI(
     title="MetaCare API",
