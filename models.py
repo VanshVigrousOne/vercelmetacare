@@ -278,7 +278,7 @@ class DoctorSettings(Base):
     doctor_id = Column(Integer, ForeignKey("doctors.id"), unique=True)
     working_start = Column(String, default="09:00")
     working_end = Column(String, default="17:00")
-    lunch_start = Column(String, default="13:00")
+    lunch_start = Column(String, default="12:00")
     lunch_end = Column(String, default="14:00")
     slot_minutes = Column(Integer, default=30)
     working_days = Column(JSON, default=[0, 1, 2, 3, 4, 5])  # Mon=0 ... Sun=6
