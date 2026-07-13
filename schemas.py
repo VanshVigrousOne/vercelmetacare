@@ -447,46 +447,6 @@ class DoctorBreakOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ChwSettingsOut(BaseModel):
-    chw_id: int
-    working_start: str
-    working_end: str
-    lunch_start: str
-    lunch_end: str
-    slot_minutes: int
-    working_days: List[int]
-
-    model_config = {"from_attributes": True}
-
-
-class ChwSettingsUpdate(BaseModel):
-    working_start: Optional[str] = None
-    working_end: Optional[str] = None
-    lunch_start: Optional[str] = None
-    lunch_end: Optional[str] = None
-    slot_minutes: Optional[int] = None
-    working_days: Optional[List[int]] = None
-
-
-class ChwBreakCreate(BaseModel):
-    date: str
-    start_time: str
-    end_time: str
-    reason: str = "Blocked"
-
-
-class ChwBreakOut(BaseModel):
-    id: int
-    chw_id: int
-    date: str
-    start_time: str
-    end_time: str
-    reason: Optional[str]
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
 class CalendarSlot(BaseModel):
     time: str                          # "HH:MM"
     status: str                        # available | booked | lunch | blocked | closed
@@ -503,9 +463,6 @@ class CalendarDayOut(BaseModel):
     date: str
     slot_minutes: int
     slots: List[CalendarSlot]
-    owner_role: str = "doctor"          # "doctor" | "chw" — whose calendar this is
-    owner_name: Optional[str] = None    # display name, so the UI can label "My Calendar" vs "Dr. X's Calendar"
-    editable: bool = False              # whether the viewer can book/block on this calendar
 
 
 #  Diet Plan
