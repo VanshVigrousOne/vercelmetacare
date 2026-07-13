@@ -888,18 +888,43 @@ function scheduleVisitFromProfile(patientId) { scheduleVisit(patientId, true, 'p
 
 async function requestDoctorVisit(patientId) {
   const reason = document.getElementById('v_Reason')?.value?.trim() || 'Follow-up required';
+  const dateEl = document.getElementById('v_Date');
+  const timeEl = document.getElementById('v_Time');
+  const durEl = document.getElementById('v_Duration');
+  let preferred_date = null;
+  if (dateEl?.value) {
+    const [hh,mm] = (timeEl?.value || '10:00').split(':');
+    const dt = new Date(dateEl.value + 'T00:00:00'); dt.setHours(parseInt(hh), parseInt(mm), 0, 0);
+    preferred_date = toLocalIso(dt);
+  }
   try {
-    await api(`/patients/${patientId}/request-visit`, 'POST', { reason: reason, visit_type: 'Impromptu' });
+    await api(`/patients/${patientId}/request-visit`, 'POST', {
+      reason: reason, visit_type: 'Impromptu',
+      preferred_date, duration_minutes: parseInt(durEl?.value || '30')
+    });
     await fetchAllData();
-    alert('Visit requested.');
+    alert(preferred_date ? 'Visit requested — the doctor is free at that time.' : 'Visit requested.');
     renderTabs(); renderSidebar(); renderContent();
   } catch(e) { alert('Request failed: ' + e.message); }
 }
 
 function requestDoctorVisitFromProfile(patientId) {
   const reason = document.getElementById('pv_Reason')?.value?.trim() || 'Follow-up required';
-  api(`/patients/${patientId}/request-visit`, 'POST', { reason: reason, visit_type: 'Impromptu' })
-    .then(() => { fetchAllData().then(() => { renderTabs(); renderSidebar(); renderContent(); }); });
+  const dateEl = document.getElementById('pv_Date');
+  const timeEl = document.getElementById('pv_Time');
+  const durEl = document.getElementById('pv_Duration');
+  let preferred_date = null;
+  if (dateEl?.value) {
+    const [hh,mm] = (timeEl?.value || '10:00').split(':');
+    const dt = new Date(dateEl.value + 'T00:00:00'); dt.setHours(parseInt(hh), parseInt(mm), 0, 0);
+    preferred_date = toLocalIso(dt);
+  }
+  api(`/patients/${patientId}/request-visit`, 'POST', {
+    reason: reason, visit_type: 'Impromptu',
+    preferred_date, duration_minutes: parseInt(durEl?.value || '30')
+  })
+    .then(() => { fetchAllData().then(() => { alert(preferred_date ? 'Visit requested — the doctor is free at that time.' : 'Visit requested.'); renderTabs(); renderSidebar(); renderContent(); }); })
+    .catch(e => alert('Request failed: ' + e.message));
 }
 
 async function patientRequestVisit(patientId) {
@@ -1948,6 +1973,7 @@ function renderTaskDetail(t) {
       ${t.chw_validated?`<div class="chw-label">✓ CHW validated note</div><div class="chw-block">${t.chw_validated_note}</div>`:`<div class="form-label">Your validation note (after calling patient)</div><textarea id="chwNote" rows="3" placeholder="e.g. Called patient. Confirmed trembling…" style="margin-bottom:8px"></textarea><button class="btn btn-primary" onclick="validateTask(${t.id})" style="margin-bottom:.75rem">${state.loading['validate_'+t.id]?'<span class="spinner"></span>Saving...':'✓ Save validation'}</button>`}
       <hr class="sep">
       <div class="form-label" style="color:#0F6E56">Schedule / Request Visit</div>
+      <button class="btn btn-small" style="margin-bottom:6px" onclick="openCalendarView()">📅 Check doctor's calendar first</button>
       ${renderVisitFormFields('v_')}
       <div class="flex" style="gap:8px;margin-bottom:.75rem"><button class="btn btn-blue" onclick="scheduleVisit(${t.patient_id},false,'v_')" style="flex:1">📅 Schedule Visit</button><button class="btn btn-amber" onclick="requestDoctorVisit(${t.patient_id})" style="flex:1">⬆ Request Doctor Appointment</button></div>
       <hr class="sep"><div class="form-label">Send message to patient</div><textarea id="notifMsg" rows="2" placeholder="e.g. Ramesh ji, please check sugar…" style="margin-bottom:8px"></textarea><button class="btn" onclick="sendNotification(${t.patient_id})" style="margin-bottom:.75rem">${state.loading['notif_'+t.patient_id]?'<span class="spinner"></span>Sending...':'📲 Send message to patient'}</button>
@@ -2189,6 +2215,7 @@ function renderProviderVisitsTab(p, sess) {
     ${vReqs.filter(r=>r.status!=='Completed').length>0?`<div class="info-banner" style="margin-bottom:12px"><span>📋</span><span>Visit request pending response</span></div>`:''}
     <div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px">
       <div class="form-label" style="color:#0F6E56;margin-bottom:8px">+ New Visit</div>
+      ${sess.role==='chw'?`<button class="btn btn-small" style="margin-bottom:6px" onclick="openCalendarView()">📅 Check doctor's calendar first</button>`:''}
       ${renderVisitFormFields('pv_')}
       <div class="flex" style="gap:8px"><button class="btn btn-primary" onclick="scheduleVisitFromProfile(${p.id})" style="flex:1">📅 ${sess.role==='doctor'?'Schedule & notify patient+CHW':'Schedule visit'}</button>${sess.role==='chw'?`<button class="btn btn-amber" onclick="requestDoctorVisitFromProfile(${p.id})" style="flex:1">⬆ Request Doctor Visit</button>`:''}</div>
     </div>
