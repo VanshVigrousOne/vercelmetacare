@@ -87,6 +87,27 @@ def _run_auto_migrations():
                     else "IF NOT EXISTS meeting_id VARCHAR"
                 )
                 conn.exec_driver_sql(stmt)
+            if "provider_role" not in cols:
+                stmt = "ALTER TABLE clinic_visits ADD COLUMN " + (
+                    "provider_role VARCHAR DEFAULT 'doctor'" if is_sqlite
+                    else "IF NOT EXISTS provider_role VARCHAR DEFAULT 'doctor'"
+                )
+                conn.exec_driver_sql(stmt)
+            if "provider_id" not in cols:
+                stmt = "ALTER TABLE clinic_visits ADD COLUMN " + (
+                    "provider_id INTEGER" if is_sqlite
+                    else "IF NOT EXISTS provider_id INTEGER"
+                )
+                conn.exec_driver_sql(stmt)
+                # Backfill: every pre-existing visit was implicitly a doctor visit
+                # (CHW-owned visits didn't exist before this column did), so wire
+                # it to the patient's doctor now — otherwise conflict-detection
+                # silently ignores every visit created before this migration.
+                conn.exec_driver_sql(
+                    "UPDATE clinic_visits SET provider_id = "
+                    "(SELECT patients.doctor_id FROM patients WHERE patients.id = clinic_visits.patient_id) "
+                    "WHERE provider_id IS NULL"
+                )
             conn.commit()
     except Exception as exc:
         logger.warning(f"Skipping auto-migration check: {exc}")
