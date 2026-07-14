@@ -205,7 +205,7 @@ let state = {
   role: 'Patient', patientId: null, selectedTask: null, selectedAlert: null,
   selectedPatient: null, addingPatient: false, addingCHW: false, loading: {}, flash: null,
   patientTab: 'overview', providerPatientTab: 'overview', patientSearch: '',
-  dietPlans: {}, visits: {}, testResults: {}, visitRequests: {}, foodLogs: {}, exerciseLogs: {},
+  dietPlans: {}, visits: {}, testResults: {}, visitRequests: {}, foodLogs: {}, exerciseLogs: {}, documents: {},
   // Calendar / scheduling
   viewMode: null,                 // null | 'calendar'
   calendarDate: todayStr(),       // 'YYYY-MM-DD' currently viewed
@@ -458,12 +458,13 @@ function logout() {
 // ── Backend Data Fetching (REAL API) ───────────────────────────────────────────
 async function fetchPatientSpecificData(pId) {
   try {
-    const [visits, diets, tests, foodLogs, exerciseLogs] = await Promise.all([
+    const [visits, diets, tests, foodLogs, exerciseLogs, documents] = await Promise.all([
       api(`/patients/${pId}/visits`).catch(() => []),
       api(`/patients/${pId}/diet-plans?active_only=true`).catch(() => []),
       api(`/patients/${pId}/lab-tests`).catch(() => []),
       api(`/patients/${pId}/food-logs`).catch(() => []),
-      api(`/patients/${pId}/exercise-logs`).catch(() => [])
+      api(`/patients/${pId}/exercise-logs`).catch(() => []),
+      api(`/patients/${pId}/documents`).catch(() => [])
     ]);
 
     state.visits[pId] = visits.map(v => ({
@@ -497,6 +498,7 @@ async function fetchPatientSpecificData(pId) {
 
     state.foodLogs[pId] = foodLogs;
     state.exerciseLogs[pId] = exerciseLogs;
+    state.documents[pId] = documents;
 
     // Extract visit requests from alerts
     state.visitRequests[pId] = db.alerts.filter(a => a.patient_id === pId && (a.source === 'VisitRequest' || a.source === 'PatientVisitRequest') && a.visit_request_status === 'Requested')
@@ -1842,6 +1844,7 @@ function renderPatientView(el) {
     report: renderPatientReportTab(patient, rx), history: renderPatientHistoryTab(patient, logs),
     messages: renderPatientMessagesTab(patient, notifs, unread), diet: renderPatientDietTab(patient),
     visits: renderPatientVisitsTab(patient), tests: renderPatientTestsTab(patient),
+    documents: renderDocumentsTab(patient, getSession()),
   };
 
   el.innerHTML = `
@@ -1851,7 +1854,7 @@ function renderPatientView(el) {
       ${unread.length>0?`<div class="alert-banner" style="margin:0 0 0 auto;padding:6px 12px"><span>📬</span><span>${unread.length} new</span></div>`:''}
     </div>
     <div class="tab-bar">
-      ${[['overview','📊 Overview'],['report','📝 Report'],['history','📈 History'],['messages','📬 Messages'],['diet','🥗 Diet'],['visits','🏥 Visits'],['tests','🧪 Tests']].map(([t,l])=>
+      ${[['overview','📊 Overview'],['report','📝 Report'],['history','📈 History'],['messages','📬 Messages'],['diet','🥗 Diet'],['visits','🏥 Visits'],['tests','🧪 Tests'],['documents','📄 Reports']].map(([t,l])=>
         `<button class="tab-btn ${state.patientTab===t?'active':''}" onclick="state.patientTab='${t}';renderContent()">${l}</button>`
       ).join('')}
     </div>
@@ -2068,14 +2071,15 @@ function renderDieticianPatientView(pid) {
   const p = getPatient(pid); if (!p) return `<div class="card"><div class="muted">Patient not found.</div></div>`;
   const sess = getSession();
   const logs = getPatientLogs(pid);
-  const tabs = [['overview','Overview'], ['history','History'], ['tests','Tests'], ['diet','Diet']];
-  if (!['overview','history','tests','diet'].includes(state.providerPatientTab)) state.providerPatientTab = 'overview';
+  const tabs = [['overview','Overview'], ['history','History'], ['tests','Tests'], ['documents','Reports'], ['diet','Diet']];
+  if (!['overview','history','tests','documents','diet'].includes(state.providerPatientTab)) state.providerPatientTab = 'overview';
   return `<div class="card">
     <div class="profile-header" style="margin-bottom:.75rem"><div class="avatar av-teal" style="width:54px;height:54px;font-size:18px">${initials(p.name)}</div><div><div class="h1">${p.name}</div><div class="muted">${p.age||'--'}y · ${p.condition} · ${p.village||''}</div></div></div>
     <div class="tab-bar">${tabs.map(([t,l])=>`<button class="tab-btn ${state.providerPatientTab===t?'active':''}" onclick="state.providerPatientTab='${t}';renderContent()">${l}</button>`).join('')}</div>
     ${state.providerPatientTab==='overview'?renderProviderOverviewTab(p,logs,null,[],[]):''}
     ${state.providerPatientTab==='history'?renderProviderHistoryTab(p,logs):''}
     ${state.providerPatientTab==='tests'?renderProviderTestsTab(p,sess):''}
+    ${state.providerPatientTab==='documents'?renderDocumentsTab(p,sess):''}
     ${state.providerPatientTab==='diet'?renderProviderDietTab(p,sess):''}
   </div>`;
 }
@@ -2286,13 +2290,14 @@ function renderAddDieticianView(el) {
 function renderProviderPatientView(pid) {
   const p = getPatient(pid); if (!p) return `<div class="card"><div class="muted">Patient not found.</div></div>`;
   const logs = getPatientLogs(pid); const rx = getActivePrescription(pid); const openTasks = db.tasks.filter(t=>t.patient_id===pid&&t.status==='Pending'); const activeAlerts = db.alerts.filter(a=>a.patient_id===pid&&!a.is_resolved); const sess = getSession();
-  const tabs = [['overview','Overview'], ['visits','Visits'], ['tests','Tests'], ['diet','Diet'], ['history','History'], ...(sess.role==='doctor'?[['manage','Manage']]:[])];
+  const tabs = [['overview','Overview'], ['visits','Visits'], ['tests','Tests'], ['documents','Reports'], ['diet','Diet'], ['history','History'], ...(sess.role==='doctor'?[['manage','Manage']]:[])];
   return `<div class="card">
     <div class="profile-header" style="margin-bottom:.75rem"><div class="avatar av-teal" style="width:54px;height:54px;font-size:18px">${initials(p.name)}</div><div><div class="h1">${p.name}</div><div class="muted">${p.age||'--'}y · ${p.condition} · ${p.phone||'—'}</div><div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap"><span class="badge b-gray">HbA1c: ${p.hba1c||'--'}%</span><span class="badge b-gray">Wt: ${p.weight||'--'} kg</span>${p.height_cm?`<span class="badge b-gray">Ht: ${p.height_cm} cm</span><span class="badge b-gray">BMI: ${Math.round((p.weight/((p.height_cm/100)**2))*10)/10}</span>`:''}<span class="badge b-gray">${p.village||''}</span></div></div></div>
     <div class="tab-bar">${tabs.map(([t,l])=>`<button class="tab-btn ${state.providerPatientTab===t?'active':''}" onclick="state.providerPatientTab='${t}';renderContent()">${l}</button>`).join('')}</div>
     ${state.providerPatientTab==='overview'?renderProviderOverviewTab(p,logs,rx,openTasks,activeAlerts):''}
     ${state.providerPatientTab==='visits'?renderProviderVisitsTab(p,sess):''}
     ${state.providerPatientTab==='tests'?renderProviderTestsTab(p,sess):''}
+    ${state.providerPatientTab==='documents'?renderDocumentsTab(p,sess):''}
     ${state.providerPatientTab==='diet'?renderProviderDietTab(p,sess):''}
     ${state.providerPatientTab==='history'?renderProviderHistoryTab(p,logs):''}
     ${state.providerPatientTab==='manage'&&sess.role==='doctor'?renderDoctorManageTab(p,rx):''}
@@ -2403,6 +2408,114 @@ function renderProviderTestsTab(p, sess) {
     ${sess.role==='doctor'?`<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Order New Test</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Test Name</div><input type="text" id="newTestName" placeholder="e.g. HbA1c"></div><div><div class="form-label">Due Date</div><input type="date" id="newTestDate" value="${new Date(Date.now()+7*86400000).toISOString().split('T')[0]}"></div></div><input type="text" id="newTestNotes" placeholder="Notes for patient/CHW" style="margin-bottom:8px"><button class="btn btn-primary" onclick="orderTestFromProfile(${p.id})">🧪 Order test → notify patient & CHW</button></div>`:`<div class="info-banner" style="margin-bottom:12px"><span>ℹ️</span><span>Tests are ordered by the doctor. You can record results after collection.</span></div>`}
     ${tests.map(t=>`<div class="test-item"><div><div style="font-weight:500;font-size:13px">${t.name}</div>${t.value!==null?`<div style="font-size:14px;font-weight:500;margin-top:2px;color:${t.status==='High'||t.status==='Watch'?'#EF9F27':t.status==='Normal'?'#0F6E56':'var(--color-text-primary)'}">${t.value} ${t.unit}</div>`:''}<div class="muted">📅 ${fmtDate(t.date)} · ${t.orderedBy}</div>${t.notes?`<div class="muted" style="font-style:italic">${t.notes}</div>`:''}${(t.status==='Pending'||t.status==='Ordered')&&sess.role!=='patient'?`<button class="btn btn-small" style="margin-top:6px" onclick="enterTestResult('${t.id}',${p.id})">Enter result</button>`:''}</div><span class="badge ${t.status==='High'?'b-amber':t.status==='Watch'?'b-amber':t.status==='Normal'?'b-green':t.status==='Pending'||t.status==='Ordered'?'b-blue':'b-gray'}">${t.status}</span></div>`).join('')}
     ${state['enteringTestResult']?`<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-top:12px"><div class="form-label" style="margin-bottom:8px">Enter Test Result</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Result Value</div><input type="text" id="testResultValue" placeholder="e.g. 7.8"></div><div><div class="form-label">Status</div><select id="testResultStatus"><option>Normal</option><option>High</option><option>Low</option><option>Watch</option></select></div></div><input type="text" id="testResultNotes" placeholder="Notes" style="margin-bottom:8px"><div class="flex" style="gap:8px"><button class="btn btn-primary" onclick="saveTestResult(${p.id})">Save result → notify patient</button><button class="btn" onclick="state.enteringTestResult=null;renderContent()">Cancel</button></div></div>`:''}`;
+}
+
+// ── Documents / Old Reports (scan, upload, download) ────────────────────────
+// Any CHW, Doctor or Dietician can add a report/scan for a patient at any
+// time — not tied to a visit or a scheduled test. Visible + downloadable by
+// the patient, their CHW, their doctor and their dietician.
+const DOC_TYPE_ICONS = { 'Lab Report':'🧪', 'Prescription':'💊', 'Scan':'🩻', 'Discharge Summary':'🏥', 'Other':'📄' };
+
+function renderDocumentsTab(p, sess) {
+  const docs = (state.documents[p.id] || []);
+  const canUpload = sess.role !== 'patient';
+  return `
+    ${canUpload ? `<div style="background:var(--color-background-secondary);border-radius:8px;padding:12px;margin-bottom:12px">
+      <div class="form-label" style="color:#0F6E56;margin-bottom:8px">📤 Add a report / scanned document</div>
+      <input type="text" id="docTitle" placeholder="Title (e.g. HbA1c report - June 2023)" style="margin-bottom:8px">
+      <div class="grid2" style="margin-bottom:8px">
+        <div><div class="form-label">Type</div>
+          <select id="docType">${Object.keys(DOC_TYPE_ICONS).map(t=>`<option value="${t}">${DOC_TYPE_ICONS[t]} ${t}</option>`).join('')}</select>
+        </div>
+        <div><div class="form-label">File (photo / scan / PDF)</div>
+          <input type="file" id="docFile" accept="image/*,application/pdf" capture="environment">
+        </div>
+      </div>
+      <input type="text" id="docNotes" placeholder="Notes (optional)" style="margin-bottom:8px">
+      <button class="btn btn-primary" onclick="uploadDocument(${p.id})">${state.loading['uploadDoc_'+p.id]?'<span class="spinner"></span>Uploading...':'📤 Upload report'}</button>
+      ${state['docUploadError_'+p.id]?`<div class="alert-banner" style="margin-top:8px">${state['docUploadError_'+p.id]}</div>`:''}
+      ${state['docUploaded_'+p.id]?`<div class="success-banner" style="margin-top:8px">✓ Report added — visible to patient, CHW, doctor & dietician.</div>`:''}
+    </div>` : `<div class="info-banner" style="margin-bottom:12px"><span>ℹ️</span><span>Reports uploaded by your CHW, doctor, or dietician appear here. You can download any of them.</span></div>`}
+    ${docs.length===0 ? `<div class="muted">No reports uploaded yet.</div>` : docs.map(d=>`
+      <div class="test-item">
+        <div>
+          <div style="font-weight:500;font-size:13px">${DOC_TYPE_ICONS[d.doc_type]||'📄'} ${d.title}</div>
+          <div class="muted">${d.doc_type||'Other'} · added by ${d.uploaded_by_name||d.uploaded_by||'Care team'} · ${fmtDate(d.created_at)}</div>
+          ${d.notes?`<div class="muted" style="font-style:italic">${d.notes}</div>`:''}
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-small btn-primary" onclick="downloadDocument(${d.id})">${state['downloadingDoc_'+d.id]?'<span class="spinner"></span>':'⬇ Download'}</button>
+          ${canUpload?`<button class="btn btn-small" onclick="deleteDocument(${d.id},${p.id})">🗑</button>`:''}
+        </div>
+      </div>`).join('')}
+  `;
+}
+
+async function uploadDocument(patientId) {
+  const titleEl = document.getElementById('docTitle');
+  const typeEl = document.getElementById('docType');
+  const notesEl = document.getElementById('docNotes');
+  const fileEl = document.getElementById('docFile');
+  const title = titleEl.value.trim();
+  const file = fileEl.files[0];
+  state['docUploadError_'+patientId] = null; state['docUploaded_'+patientId] = false;
+  if (!title) { state['docUploadError_'+patientId] = 'Please enter a title.'; renderContent(); return; }
+  if (!file) { state['docUploadError_'+patientId] = 'Please choose a file to upload.'; renderContent(); return; }
+  if (file.size > 8 * 1024 * 1024) { state['docUploadError_'+patientId] = 'File too large (max 8MB).'; renderContent(); return; }
+
+  state.loading['uploadDoc_'+patientId] = true; renderContent();
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const doc = await api(`/patients/${patientId}/documents`, 'POST', {
+      title, doc_type: typeEl.value, notes: notesEl.value.trim() || null,
+      file_name: file.name, mime_type: file.type || 'application/octet-stream', file_data: base64
+    });
+    state.documents[patientId] = [doc, ...(state.documents[patientId]||[])];
+    state['docUploaded_'+patientId] = true;
+    titleEl.value = ''; notesEl.value = ''; fileEl.value = '';
+  } catch (e) {
+    state['docUploadError_'+patientId] = 'Upload failed: ' + e.message;
+  } finally {
+    state.loading['uploadDoc_'+patientId] = false;
+    renderContent();
+  }
+}
+
+async function downloadDocument(documentId) {
+  state['downloadingDoc_'+documentId] = true; renderContent();
+  try {
+    const doc = await api(`/documents/${documentId}/download`);
+    const byteChars = atob(doc.file_data);
+    const bytes = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([bytes], { type: doc.mime_type || 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = doc.file_name || doc.title;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    alert('Could not download document: ' + e.message);
+  } finally {
+    state['downloadingDoc_'+documentId] = false;
+    renderContent();
+  }
+}
+
+async function deleteDocument(documentId, patientId) {
+  if (!confirm('Delete this report? This cannot be undone.')) return;
+  try {
+    await api(`/documents/${documentId}`, 'DELETE');
+    state.documents[patientId] = (state.documents[patientId]||[]).filter(d => d.id !== documentId);
+    renderContent();
+  } catch (e) {
+    alert('Could not delete document: ' + e.message);
+  }
 }
 
 function renderProviderDietTab(p, sess) {
