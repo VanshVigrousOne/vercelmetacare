@@ -2353,6 +2353,124 @@ def update_lab_test(
     db.refresh(test)
     return test
 
+# ── Patient Documents (scanned reports / old reports / forms) ──────────────
+# Uploaded any time by CHW, Doctor or Dietician (not tied to a visit or a
+# scheduled test). Visible to the patient, their CHW, doctor and dietician,
+# and downloadable by all of them.
+
+def _check_document_access(role, user, patient):
+    """Raise 403 unless this role/user is allowed to see this patient's documents."""
+    if role == "patient" and user.id != patient.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "chw" and patient.chw_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "doctor" and patient.doctor_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "dietician" and patient.dietician_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+MAX_DOCUMENT_BYTES = 8 * 1024 * 1024  # 8MB, base64-decoded size
+
+
+@app.post("/patients/{patient_id}/documents", response_model=schemas.DocumentOut, tags=["Documents"])
+def upload_patient_document(
+    patient_id: int,
+    payload: schemas.DocumentCreate,
+    db: Session = Depends(get_db),
+    current=Depends(auth.get_current_user),
+):
+    role, user = current
+    if role not in ("chw", "doctor", "dietician", "patient"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    _check_document_access(role, user, patient)
+
+    import base64
+    try:
+        raw = base64.b64decode(payload.file_data, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid file data")
+    if len(raw) > MAX_DOCUMENT_BYTES:
+        raise HTTPException(status_code=400, detail="File too large (max 8MB)")
+
+    doc = models.PatientDocument(
+        patient_id=patient_id,
+        title=payload.title,
+        doc_type=payload.doc_type or "Other",
+        notes=payload.notes,
+        file_name=payload.file_name,
+        mime_type=payload.mime_type,
+        file_size=len(raw),
+        file_data=payload.file_data,
+        uploaded_by=role.upper() if role != "patient" else "Patient",
+        uploaded_by_id=user.id,
+        uploaded_by_name=user.name,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+@app.get("/patients/{patient_id}/documents", response_model=List[schemas.DocumentOut], tags=["Documents"])
+def list_patient_documents(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(auth.get_current_user),
+):
+    role, user = current
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    _check_document_access(role, user, patient)
+    return db.query(models.PatientDocument).filter(
+        models.PatientDocument.patient_id == patient_id
+    ).order_by(models.PatientDocument.created_at.desc()).all()
+
+
+@app.get("/documents/{document_id}/download", response_model=schemas.DocumentDownload, tags=["Documents"])
+def download_patient_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(auth.get_current_user),
+):
+    role, user = current
+    doc = db.query(models.PatientDocument).filter(models.PatientDocument.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == doc.patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    _check_document_access(role, user, patient)
+    return doc
+
+
+@app.delete("/documents/{document_id}", tags=["Documents"])
+def delete_patient_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current=Depends(auth.get_current_user),
+):
+    role, user = current
+    doc = db.query(models.PatientDocument).filter(models.PatientDocument.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == doc.patient_id).first()
+    # Only the uploader, the assigned CHW/doctor, or the uploader's own role can delete
+    if role not in ("chw", "doctor", "dietician") or (patient and (
+        (role == "chw" and patient.chw_id != user.id) or
+        (role == "doctor" and patient.doctor_id != user.id) or
+        (role == "dietician" and patient.dietician_id != user.id)
+    )):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    db.delete(doc)
+    db.commit()
+    return {"status": "deleted"}
+
+
 # Sentry check
 # @app.get("/sentry-debug")
 # async def trigger_error():
