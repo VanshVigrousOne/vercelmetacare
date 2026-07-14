@@ -1584,46 +1584,18 @@ function renderCalendarView(el) {
 
 function renderSlotGrid(day) {
   const editable = !!day.editable;
-  // Group consecutive slots that share the same status+label into single
-  // blocks — e.g. a 2hr lunch becomes one "Lunch" bar, not four identical rows.
-  const rowH = 34; // px per slot row, Google-Calendar-ish density
-  const blocks = [];
-  day.slots.forEach((s, i) => {
-    const prev = blocks[blocks.length - 1];
-    const sameAsPrev = prev && prev.status === s.status && prev.label === s.label && prev.visit_id === s.visit_id && prev.break_id === s.break_id;
-    if (sameAsPrev) { prev.span += 1; prev.slots.push(s); }
-    else blocks.push({ status: s.status, label: s.label, visit_id: s.visit_id, patient_id: s.patient_id,
-                        visit_type: s.visit_type, break_id: s.break_id, reason: s.reason,
-                        startTime: s.time, span: 1, slots: [s] });
-  });
-
-  return `<div style="border:0.5px solid var(--color-border-tertiary);border-radius:8px;overflow:hidden">
-    ${blocks.map(b => {
-      const meta = slotStatusMeta(b.status);
-      const clickable = editable && b.status === 'available';
-      const canOpenPatient = b.status === 'booked' && b.patient_id && db.patients.some(p => p.id === b.patient_id);
-      const h = rowH * b.span;
-      const endTime = b.slots[b.slots.length - 1].time;
-      const timeRange = b.span > 1 ? `${b.startTime} – ${addMinutesToTimeStr(endTime, day.slot_minutes)}` : b.startTime;
-      const sub = b.label
-        ? (b.status === 'booked' ? `${b.label}${b.visit_type ? ' · ' + b.visit_type : ''}` : b.label)
-        : (clickable ? 'Available — tap to book' : (b.status === 'available' ? 'Free' : ''));
-      return `<div style="display:flex;border-top:0.5px solid var(--color-border-tertiary);min-height:${h}px;cursor:${clickable||canOpenPatient?'pointer':'default'}"
-        onclick="${clickable ? `openSlotBooking('${b.startTime}')` : (canOpenPatient ? `state.viewMode=null;state.selectedPatient=${b.patient_id};state.providerPatientTab='visits';renderSidebar();renderContent()` : '')}">
-        <div style="width:64px;flex-shrink:0;padding:6px 8px;font-size:11px;color:var(--color-text-secondary);border-right:0.5px solid var(--color-border-tertiary);background:var(--color-background-secondary)">${timeRange}</div>
-        <div style="flex:1;padding:6px 10px;background:${meta.bg};display:flex;flex-direction:column;justify-content:center">
-          <div style="font-size:13px;font-weight:600;color:${meta.color}">${meta.label}</div>
-          ${sub ? `<div style="font-size:11px;color:${meta.color}">${sub}</div>` : ''}
-        </div>
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">
+    ${day.slots.map(s => {
+      const meta = slotStatusMeta(s.status);
+      const clickable = editable && s.status === 'available';
+      const canOpenPatient = s.status === 'booked' && s.patient_id && db.patients.some(p => p.id === s.patient_id);
+      return `<div style="border-radius:8px;padding:8px 10px;background:${meta.bg};border:${clickable?'1px dashed':'0.5px solid'} ${meta.color}22;cursor:${clickable||canOpenPatient?'pointer':'default'}"
+        onclick="${clickable ? `openSlotBooking('${s.time}')` : (canOpenPatient ? `state.viewMode=null;state.selectedPatient=${s.patient_id};state.providerPatientTab='visits';renderSidebar();renderContent()` : '')}">
+        <div class="flex-between"><span style="font-size:13px;font-weight:600;color:${meta.color}">${s.time}</span><span class="badge" style="background:transparent;color:${meta.color};padding:0;font-size:10px">${meta.label}</span></div>
+        <div style="font-size:11px;color:${meta.color};margin-top:2px">${s.label || (clickable ? 'Tap to book' : (s.status==='available' ? 'Free' : ''))}</div>
       </div>`;
     }).join('')}
   </div>`;
-}
-
-function addMinutesToTimeStr(t, mins) {
-  const [hh, mm] = t.split(':').map(Number);
-  const total = hh * 60 + mm + mins;
-  return `${String(Math.floor(total/60)%24).padStart(2,'0')}:${String(total%60).padStart(2,'0')}`;
 }
 
 function openSlotBooking(time) { state.calSlotBooking = time; state.calBookPatientId = null; renderContent(); }
