@@ -124,6 +124,8 @@ class Patient(Base):
                              order_by="FoodLog.created_at.desc()")
     exercise_logs = relationship("ExerciseLog", back_populates="patient",
                                  order_by="ExerciseLog.created_at.desc()")
+    documents = relationship("PatientDocument", back_populates="patient",
+                             order_by="PatientDocument.created_at.desc()")
 
 
 class DailyLog(Base):
@@ -395,6 +397,33 @@ class LabTest(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     patient = relationship("Patient", back_populates="lab_tests")
+
+
+class PatientDocument(Base):
+    """Uploaded/scanned reports, old test results, forms — added any time (not
+    tied to a visit or a scheduled test). Visible to the patient, their CHW,
+    doctor, and dietician, and downloadable by all of them."""
+    __tablename__ = "patient_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False)
+
+    title = Column(String, nullable=False)          # e.g. "HbA1c report - June 2023"
+    doc_type = Column(String, default="Other")       # Lab Report | Prescription | Scan | Discharge Summary | Other
+    notes = Column(Text)
+
+    file_name = Column(String, nullable=False)
+    mime_type = Column(String, nullable=False)
+    file_size = Column(Integer)                      # bytes
+    file_data = Column(Text, nullable=False)          # base64-encoded file content
+
+    uploaded_by = Column(String, nullable=False)      # CHW | Doctor | Dietician | Patient
+    uploaded_by_id = Column(Integer)
+    uploaded_by_name = Column(String)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    patient = relationship("Patient", back_populates="documents")
 
 
 class FoodLog(Base):
