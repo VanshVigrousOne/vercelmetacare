@@ -675,3 +675,35 @@ class ExerciseLogOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# Patient Documents (scanned reports / old reports / forms — uploaded any time,
+# visible to patient, CHW, doctor, dietician; downloadable by all of them)
+
+class DocumentCreate(BaseModel):
+    title: str
+    doc_type: Optional[str] = "Other"      # Lab Report | Prescription | Scan | Discharge Summary | Other
+    notes: Optional[str] = None
+    file_name: str
+    mime_type: str
+    file_data: str          # base64-encoded file content (no data: prefix)
+
+
+class DocumentOut(BaseModel):
+    id: int
+    patient_id: int
+    title: str
+    doc_type: Optional[str]
+    notes: Optional[str]
+    file_name: str
+    mime_type: str
+    file_size: Optional[int]
+    uploaded_by: Optional[str]
+    uploaded_by_name: Optional[str]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class DocumentDownload(DocumentOut):
+    file_data: str
