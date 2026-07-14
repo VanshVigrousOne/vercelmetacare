@@ -5,7 +5,7 @@
     { "src": "index.html", "use": "@vercel/static" }
   ],
   "routes": [
-    { "src": "/(ai|alerts|auth|calendar|chws|diet-plans|diet-reference|dieticians|doctors|lab-tests|notifications|patients|prescriptions|sentry-debug|tasks|visits)(.*)", "dest": "main.py" },
+    { "src": "/(ai|alerts|auth|calendar|chws|diet-plans|diet-reference|dieticians|doctors|documents|lab-tests|notifications|patients|prescriptions|sentry-debug|tasks|visits)(.*)", "dest": "main.py" },
     { "src": "/(.*)", "dest": "index.html" }
   ],
   "env": {
