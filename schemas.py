@@ -301,6 +301,10 @@ class AlertOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class BulkResolveOut(BaseModel):
+    resolved_count: int
+
+
 # Notification
 
 class NotificationCreate(BaseModel):
