@@ -500,9 +500,19 @@ async function fetchPatientSpecificData(pId) {
     state.exerciseLogs[pId] = exerciseLogs;
     state.documents[pId] = documents;
 
-    // Extract visit requests from alerts
-    state.visitRequests[pId] = db.alerts.filter(a => a.patient_id === pId && (a.source === 'VisitRequest' || a.source === 'PatientVisitRequest') && a.visit_request_status === 'Requested')
-      .map(a => ({ id: a.id, patientId: pId, requestedBy: a.visit_requested_by, requestedByRole: a.source === 'PatientVisitRequest' ? 'Patient' : 'CHW', reason: a.alert_reason, urgency: 'High', status: 'Pending Doctor Response' }));
+    // Extract visit requests from alerts — pending ones AND recently-resolved
+    // ones the CHW hasn't dismissed yet, so the doctor's Accept/Decline shows
+    // up right here instead of the request just disappearing.
+    state.visitRequests[pId] = db.alerts.filter(a => a.patient_id === pId && (a.source === 'VisitRequest' || a.source === 'PatientVisitRequest'))
+      .map(a => ({
+        id: a.id, patientId: pId, requestedBy: a.visit_requested_by,
+        requestedByRole: a.source === 'PatientVisitRequest' ? 'Patient' : 'CHW',
+        reason: a.alert_reason, urgency: 'High',
+        status: a.visit_request_status === 'Accepted' ? 'Accepted'
+              : a.visit_request_status === 'Declined' ? 'Declined'
+              : a.is_resolved ? 'Closed'
+              : 'Pending Doctor Response',
+      }));
   } catch(e) { console.error("Error fetching patient specific data", e); }
 }
 
@@ -530,6 +540,13 @@ async function _fetchAllDataImpl() {
     db.patients = await api(`/chws/${userId}/patients`);
     db.tasks = await api('/tasks?status=Pending');
     db.alerts = await api('/alerts'); // alerts for patients assigned to this CHW
+    // Recently-resolved visit requests too (doctor Accepted/Declined) — not
+    // acknowledged yet — so the CHW's own request list shows the outcome in
+    // place instead of the request just disappearing once the doctor acts.
+    const resolvedVisitAlerts = await api('/alerts?resolved=true&limit=30').catch(()=>[]);
+    db.alerts = db.alerts.concat(
+      resolvedVisitAlerts.filter(a => (a.source === 'VisitRequest' || a.source === 'PatientVisitRequest') && !a.chw_acknowledged)
+    );
     db.dieticians = await api(`/doctors/${currentUser.doctor_id}/dieticians`);
     state.patientId = db.patients.length > 0 ? db.patients[0].id : null;
   } else if (sess.role === 'dietician') {
@@ -870,6 +887,14 @@ async function submitReport() {
 async function markNotificationsRead() {
   try { await api(`/patients/${state.patientId}/notifications/read`, 'POST'); await fetchAllData(); renderContent(); } catch(e) {}
 }
+async function acknowledgeVisitRequest(alertId) {
+  if (state.loading['ack_'+alertId]) return;
+  state.loading['ack_'+alertId] = true; renderContent();
+  try { await api(`/alerts/${alertId}/acknowledge`, 'POST'); await fetchAllData(); }
+  catch(e) { alert('Failed: ' + e.message); }
+  state.loading['ack_'+alertId] = false;
+  renderTabs(); renderSidebar(); renderContent();
+}
 
 async function scheduleVisit(patientId, fromProfile=false, prefix) {
   prefix = prefix || (fromProfile ? 'pv_' : 'v_');
@@ -952,10 +977,24 @@ async function patientRequestVisit(patientId) {
   renderTabs(); renderSidebar(); renderContent();
 }
 
+async function declineVisitRequest(alertId, patientId) {
+  if (state.loading['decline_'+alertId]) return;
+  const reason = prompt('Reason for declining (optional, shared with CHW/patient):') || '';
+  state.loading['decline_'+alertId] = true; renderContent();
+  try {
+    await api(`/alerts/${alertId}/decline-visit`, 'POST', { reason: reason || null });
+    await fetchAllData();
+    state.selectedAlert = null;
+  } catch(e) { alert('Failed: ' + e.message); }
+  state.loading['decline_'+alertId] = false;
+  renderTabs(); renderSidebar(); renderContent();
+}
+
 async function doctorAcceptCase(patientId, alertId) {
   const date = document.getElementById('docVisitDate')?.value;
   const time = document.getElementById('docVisitTime')?.value || '10:00';
   const duration = parseInt(document.getElementById('docVisitDuration')?.value || '30');
+  const visitType = document.getElementById('docVisitType')?.value || 'Physical Visit';
   const meetingId = document.getElementById('docVisitMeetingId')?.value?.trim();
   const tests = document.getElementById('docVisitTests')?.value?.trim() || '';
   if (!date) { alert("Select a date"); return; }
@@ -965,7 +1004,8 @@ async function doctorAcceptCase(patientId, alertId) {
   try {
     await api(`/alerts/${alertId}/accept-visit`, 'POST', {
       visit_date: toLocalIso(dt), notes: tests, duration_minutes: duration,
-      meeting_id: meetingId || null
+      visit_type: visitType,
+      meeting_id: visitType === 'Teleconsultation' ? (meetingId || null) : null
     });
     await fetchAllData();
     state.selectedAlert = null; state.selectedPatient = patientId; state.providerPatientTab = 'visits';
@@ -2058,16 +2098,19 @@ function renderCHWView(el) {
       ${tasks.length===0?`<div class="card"><div class="muted">No pending tasks. All patients stable.</div></div>`:''}
       ${tasks.map(t=>{const p = getPatient(t.patient_id); return `<div class="task-card ${state.selectedTask===t.id?'selected':''}" onclick="state.selectedTask=${t.id};state.selectedPatient=null;renderContent()"><div class="flex-between" style="margin-bottom:4px"><span style="font-size:13px;font-weight:500">${p?p.name:'Unknown'}</span><span class="badge ${classColor(t.ai_classification, t.critical_sugar_alert)}">${t.ai_classification}</span></div><div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px">${t.task_type}</div>${t.critical_sugar_alert?`<div class="badge b-red" style="margin-bottom:4px">🚨 Critical Sugar Reading</div>`:''}${t.raw_patient_text?`<div style="font-size:12px;font-style:italic;color:var(--color-text-secondary)">"${t.raw_patient_text.slice(0,60)}..."</div>`:''}<div style="margin-top:4px;font-size:11px;color:var(--color-text-secondary)">${timeAgo(t.created_at)}</div></div>`;}).join('')}
       ${(() => {
-        // Every patient's pending self-requested visit, flattened into one list.
-        // With hundreds/thousands of patients this can grow large, so it's
-        // capped per page with a "Show more" control instead of dumping
-        // everything into the DOM at once.
+        // Every patient's visit request, flattened into one list — pending
+        // ones awaiting the doctor, plus ones the doctor just Accepted or
+        // Declined that the CHW hasn't cleared yet. Same list, so the outcome
+        // shows up right where the request was instead of vanishing silently.
         const allVReqs = [];
-        db.patients.forEach(p => (state.visitRequests[p.id]||[]).filter(r=>r.status==='Pending Doctor Response').forEach(r => allVReqs.push({p, r})));
+        db.patients.forEach(p => (state.visitRequests[p.id]||[]).forEach(r => allVReqs.push({p, r})));
         const shown = state.chwVisitReqPageSize || 10;
         const visible = allVReqs.slice(0, shown);
         const remaining = allVReqs.length - visible.length;
-        const dismissableCount = allVReqs.filter(({r}) => r.requestedByRole === 'Patient').length;
+        // Dismissable: the patient's own self-request (CHW's call to clear),
+        // or any request the doctor has already Accepted/Declined (CHW's own
+        // escalation, now resolved — CHW can clear it once they've seen it).
+        const dismissableCount = allVReqs.filter(({r}) => r.requestedByRole === 'Patient' || r.status === 'Accepted' || r.status === 'Declined' || r.status === 'Closed').length;
         // Once there's more than a couple of these, dismissing one at a time
         // doesn't scale to a real patient panel — offer a single bulk action
         // instead. Only ever touches the CHW's own dismissable queue.
@@ -2076,16 +2119,17 @@ function renderCHWView(el) {
           <button class="btn btn-small" ${state.loading.resolveAllDismissable?'disabled':''} onclick="resolveAllDismissable()">${state.loading.resolveAllDismissable?'<span class="spinner"></span>Clearing...':'✓ Dismiss all handled'}</button>
         </div>` : '';
         return dismissAllHeader + visible.map(({p, r}) => {
-          // Only a patient's own self-requested visit can be dismissed by the
-          // CHW directly (that's the alert type routed to them). A visit the
-          // CHW themselves already escalated to the doctor stays open until
-          // the doctor acts on it.
-          const dismissable = r.requestedByRole === 'Patient';
-          const busy = state.loading['resolveAlert_'+r.id];
-          return `<div class="task-card" style="border-left:3px solid #EF9F27" onclick="state.selectedPatient=${p.id};state.selectedTask=null;state.providerPatientTab='visits';renderContent()">
-            <div class="flex-between" style="margin-bottom:4px"><span style="font-size:13px;font-weight:500">${p.name}</span><span class="badge b-amber">${r.requestedByRole==='Patient'?'Patient requested visit':'Visit Request'}</span></div>
+          const alreadyResolved = r.status === 'Accepted' || r.status === 'Declined' || r.status === 'Closed';
+          const dismissable = alreadyResolved || r.requestedByRole === 'Patient';
+          const busy = state.loading['resolveAlert_'+r.id] || state.loading['ack_'+r.id];
+          const dismissFn = alreadyResolved ? `acknowledgeVisitRequest(${r.id})` : `resolveAlert(${r.id})`;
+          const statusBadge = r.status === 'Accepted' ? `<span class="badge b-green">✓ Accepted</span>`
+            : r.status === 'Declined' ? `<span class="badge b-red">✕ Declined</span>`
+            : `<span class="badge b-amber">${r.requestedByRole==='Patient'?'Patient requested visit':'Visit Request'}</span>`;
+          return `<div class="task-card" style="border-left:3px solid ${r.status==='Accepted'?'#0F6E56':r.status==='Declined'?'#A32D2D':'#EF9F27'}" onclick="state.selectedPatient=${p.id};state.selectedTask=null;state.providerPatientTab='visits';renderContent()">
+            <div class="flex-between" style="margin-bottom:4px"><span style="font-size:13px;font-weight:500">${p.name}</span>${statusBadge}</div>
             <div style="font-size:12px;color:var(--color-text-secondary)">${r.reason}</div>
-            <div class="flex-between" style="margin-top:4px"><span style="font-size:11px;color:#EF9F27">Urgency: ${r.urgency}</span>${dismissable?`<button class="btn btn-small" ${busy?'disabled':''} onclick="event.stopPropagation();resolveAlert(${r.id})">${busy?'<span class="spinner"></span>':'✓ Handled — dismiss'}</button>`:''}</div>
+            <div class="flex-between" style="margin-top:4px"><span style="font-size:11px;color:#EF9F27">${r.status==='Accepted'||r.status==='Declined'?'Doctor responded':'Urgency: '+r.urgency}</span>${dismissable?`<button class="btn btn-small" ${busy?'disabled':''} onclick="event.stopPropagation();${dismissFn}">${busy?'<span class="spinner"></span>':'✓ Handled — dismiss'}</button>`:''}</div>
           </div>`;
         }).join('') + (remaining > 0 ? `<button class="btn" style="width:100%;margin-top:4px" onclick="state.chwVisitReqPageSize=${shown+10};renderContent()">Show ${Math.min(remaining,10)} more (${remaining} left)</button>` : '');
       })()}
@@ -2205,13 +2249,15 @@ function renderAlertDetail(a) {
       <hr class="sep"><div class="card-title">Blood sugar trend</div><div class="chart-bar-wrap">${logs.slice(0,7).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*72):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>
       <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Accept Case & Schedule Clinic Visit</div>
       <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Appointment Date</div><input type="date" id="docVisitDate" value="${new Date(Date.now()+3*86400000).toISOString().split('T')[0]}"></div><div><div class="form-label">Time</div><select id="docVisitTime">${generateTimeOptions()}</select></div></div>
-      <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Duration</div><select id="docVisitDuration"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></div><div><div class="form-label">Google Meet code (if teleconsult)</div><input type="text" id="docVisitMeetingId" placeholder="abc-defg-hij"></div></div>
-      <input type="text" id="docVisitTests" placeholder="Tests to order (e.g. HbA1c, Kidney function)" style="margin-bottom:8px"><button class="btn btn-primary" onclick="doctorAcceptCase(${a.patient_id},${a.id})" style="margin-bottom:.75rem;width:100%">${state.loading['accept_'+a.id]?'<span class="spinner"></span>Scheduling...':'✓ Accept case + schedule appointment (notifies patient & CHW)'}</button>
+      <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Visit Type</div><select id="docVisitType" onchange="toggleMeetingField('docVisit')"><option value="Physical Visit">Physical Visit</option><option value="Teleconsultation">Teleconsultation</option></select></div><div><div class="form-label">Duration</div><select id="docVisitDuration"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></div></div>
+      <div id="docVisitMeetingWrap" style="display:none;margin-bottom:8px"><div class="form-label">Google Meet code</div><input type="text" id="docVisitMeetingId" placeholder="abc-defg-hij"></div>
+      <input type="text" id="docVisitTests" placeholder="Tests to order (e.g. HbA1c, Kidney function)" style="margin-bottom:8px">
+      <div class="flex" style="gap:8px;margin-bottom:.75rem"><button class="btn btn-primary" onclick="doctorAcceptCase(${a.patient_id},${a.id})" style="flex:1">${state.loading['accept_'+a.id]?'<span class="spinner"></span>Scheduling...':'✓ Accept + schedule (notifies patient & CHW)'}</button>${a.source==='VisitRequest'||a.source==='PatientVisitRequest'?`<button class="btn btn-danger" ${state.loading['decline_'+a.id]?'disabled':''} onclick="declineVisitRequest(${a.id},${a.patient_id})" style="flex:0 0 auto">${state.loading['decline_'+a.id]?'<span class="spinner"></span>':'✕ Decline'}</button>`:''}</div>
       <hr class="sep"><div class="form-label">Issue / update prescription</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Medication</div><input type="text" id="docRxMed" placeholder="e.g. Metformin 1000mg" value="${rx?rx.medication_name:''}"></div><div><div class="form-label">Dosage</div><input type="text" id="docRxDose" placeholder="e.g. Twice daily" value="${rx?rx.dosage:''}"></div></div><input type="text" id="docRxInstr" placeholder="Additional instructions..." value="${rx&&rx.instructions?rx.instructions:''}" style="margin-bottom:8px"><button class="btn btn-primary" onclick="issuePrescription(${a.patient_id})" style="margin-bottom:.75rem">${state.loading['docRx_'+a.patient_id]?'<span class="spinner"></span>Issuing...':'💊 Issue prescription → notifies patient + CHW'}</button>
       <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Set / Update Diet Plan</div><textarea id="dietBreakfast" rows="2" placeholder="Breakfast items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.breakfast||[]).join(', ')}</textarea><textarea id="dietLunch" rows="2" placeholder="Lunch items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.lunch||[]).join(', ')}</textarea><textarea id="dietDinner" rows="2" placeholder="Dinner items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.dinner||[]).join(', ')}</textarea><textarea id="dietAvoid" rows="1" placeholder="Foods to avoid (comma separated)..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.avoid||[]).join(', ')}</textarea><textarea id="dietNotes" rows="1" placeholder="General diet notes..." style="margin-bottom:8px">${state.dietPlans[a.patient_id]?.notes||''}</textarea><button class="btn btn-blue" onclick="saveDietPlan(${a.patient_id})" style="margin-bottom:.75rem">🥗 Save diet plan → notifies patient</button>${state['dietSaved_'+a.patient_id]?`<div class="success-banner" style="margin-bottom:.75rem">✓ Diet plan saved and patient notified!</div>`:''}
       <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Order Tests</div><input type="text" id="testOrder" placeholder="e.g. HbA1c, Creatinine, Lipid Profile" style="margin-bottom:6px"><input type="date" id="testDueDate" value="${new Date(Date.now()+7*86400000).toISOString().split('T')[0]}" style="margin-bottom:8px"><button class="btn btn-blue" onclick="orderTests(${a.patient_id})" style="margin-bottom:.75rem">🧪 Order tests → notifies patient & CHW</button>
       <hr class="sep"><div class="form-label">Deep AI analysis</div><textarea id="deepAiQ" rows="2" placeholder="e.g. 'Could this be hypoglycemia given the trend?'" style="margin-bottom:8px"></textarea><button class="btn" onclick="deepAnalysis(${a.patient_id},${a.id})" style="margin-bottom:.75rem">${state.loading['deepai_'+a.id]?'<span class="spinner"></span>Thinking...':'🤖 Get deeper AI analysis ↗'}</button>${state['deepAiResult_'+a.id]?`<div class="ai-block" style="margin-top:4px">${state['deepAiResult_'+a.id]}</div>`:''}
-      <hr class="sep"><button class="btn" style="width:100%" ${state.loading['resolveAlert_'+a.id]?'disabled':''} onclick="resolveAlert(${a.id})">${state.loading['resolveAlert_'+a.id]?'<span class="spinner"></span>Resolving...':'✓ Mark alert resolved'}</button>
+      ${a.source==='VisitRequest'||a.source==='PatientVisitRequest'?'':`<hr class="sep"><button class="btn" style="width:100%" ${state.loading['resolveAlert_'+a.id]?'disabled':''} onclick="resolveAlert(${a.id})">${state.loading['resolveAlert_'+a.id]?'<span class="spinner"></span>Resolving...':'✓ Mark alert resolved'}</button>`}
     </div>`;
 }
 
