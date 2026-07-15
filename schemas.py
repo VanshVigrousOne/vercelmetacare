@@ -296,6 +296,7 @@ class AlertOut(BaseModel):
     is_resolved: bool
     visit_request_status: Optional[str]
     visit_requested_by: Optional[str]
+    chw_acknowledged: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -392,11 +393,16 @@ class VisitEscalateRequest(BaseModel):
     duration_minutes: int = 30
 
 
+class VisitDeclineRequest(BaseModel):
+    reason: Optional[str] = None
+
+
 class VisitAcceptRequest(BaseModel):
     visit_date: datetime
     notes: Optional[str] = None
     duration_minutes: int = 30
     meeting_id: Optional[str] = None    # Google Meet code — Teleconsultation visits only
+    visit_type: Optional[str] = None    # "Physical Visit" | "Teleconsultation" — doctor's call, overrides the CHW's original request
 
 
 class FollowUpCreate(BaseModel):
