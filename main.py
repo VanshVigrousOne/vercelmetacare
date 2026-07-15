@@ -823,12 +823,16 @@ def get_prescriptions(
 @app.get("/tasks", response_model=List[schemas.TaskOut], tags=["Tasks"])
 def list_tasks(
     status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current=Depends(auth.get_current_user),
 ):
     role, user = current
     if role == "dietician":
         raise HTTPException(status_code=403, detail="Dieticians only have access to diet plans, food logs, and exercise plans")
+    limit = max(1, min(limit, 200))  # cap page size — this list grows unbounded with patient count otherwise
+    offset = max(0, offset)
     q = db.query(models.CHWTask)
     if role == "chw":
         q = q.filter(models.CHWTask.chw_id == user.id)
@@ -837,7 +841,7 @@ def list_tasks(
         q = q.filter(models.CHWTask.patient_id.in_(patient_ids))
     if status:
         q = q.filter(models.CHWTask.status == status)
-    return q.order_by(models.CHWTask.created_at.desc()).all()
+    return q.order_by(models.CHWTask.created_at.desc()).offset(offset).limit(limit).all()
 
 
 @app.post("/tasks/{task_id}/validate", response_model=schemas.TaskOut, tags=["Tasks"])
@@ -965,10 +969,14 @@ def escalate_task(
 @app.get("/alerts", response_model=List[schemas.AlertOut], tags=["Alerts"])
 def list_alerts(
     resolved: bool = False,
+    limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(get_db),
     current=Depends(auth.get_current_user),
 ):
     role, user = current
+    limit = max(1, min(limit, 200))  # cap page size so a huge patient panel can't pull everything at once
+    offset = max(0, offset)
     if role == "doctor":
         query = db.query(models.DoctorAlert).filter(
             models.DoctorAlert.doctor_id == user.id,
@@ -987,6 +995,8 @@ def list_alerts(
     return (
         query.filter(models.DoctorAlert.is_resolved == resolved)
         .order_by(models.DoctorAlert.created_at.desc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
 
@@ -995,17 +1005,69 @@ def list_alerts(
 def resolve_alert(
     alert_id: int,
     db: Session = Depends(get_db),
-    doctor: models.Doctor = Depends(auth.require_doctor),
+    current=Depends(auth.get_current_user),
 ):
+    role, user = current
     alert = db.query(models.DoctorAlert).filter(models.DoctorAlert.id == alert_id).first()
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
-    if alert.doctor_id != doctor.id:
-        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if role == "doctor":
+        if alert.doctor_id != user.id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    elif role == "chw":
+        # A CHW may only clear the alert types that are routed to them —
+        # a patient's own self-requested visit ("PatientVisitRequest") — and
+        # only for a patient assigned to that CHW. CHWs can never resolve a
+        # doctor-facing clinical alert (System / CHW-escalation / VisitRequest);
+        # only the doctor who owns that alert can do that.
+        patient = db.query(models.Patient).filter(models.Patient.id == alert.patient_id).first()
+        if not patient or patient.chw_id != user.id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if alert.source != "PatientVisitRequest":
+            raise HTTPException(status_code=403, detail="Only the doctor can resolve this alert")
+    else:
+        raise HTTPException(status_code=403, detail="CHW or Doctor only")
+
     alert.is_resolved = True
+    if alert.visit_request_status == "Requested":
+        alert.visit_request_status = "Closed"
     db.commit()
     db.refresh(alert)
     return alert
+
+
+@app.post("/alerts/resolve-dismissable", response_model=schemas.BulkResolveOut, tags=["Alerts"])
+def resolve_all_dismissable_alerts(
+    db: Session = Depends(get_db),
+    current=Depends(auth.get_current_user),
+):
+    """Bulk-dismiss every alert the *current* CHW is allowed to clear themselves
+    (patient self-requested visits — same rule as resolve_alert above, just
+    applied to the whole queue at once). Needed once a CHW's patient panel
+    grows past a handful of patients and one-by-one dismissal isn't workable.
+    Never touches alerts a CHW isn't permitted to resolve (System/CHW-escalation/
+    VisitRequest stay untouched and doctor-only, same as the single-alert path)."""
+    role, user = current
+    if role != "chw":
+        raise HTTPException(status_code=403, detail="CHW only")
+
+    q = (
+        db.query(models.DoctorAlert)
+        .join(models.Patient, models.Patient.id == models.DoctorAlert.patient_id)
+        .filter(
+            models.Patient.chw_id == user.id,
+            models.DoctorAlert.is_resolved == False,
+            models.DoctorAlert.source == "PatientVisitRequest",
+        )
+    )
+    alerts = q.all()
+    for alert in alerts:
+        alert.is_resolved = True
+        if alert.visit_request_status == "Requested":
+            alert.visit_request_status = "Closed"
+    db.commit()
+    return {"resolved_count": len(alerts)}
 
 
 # VISIT ESCALATION  (CHW requests a doctor visit → Doctor accepts & schedules)
