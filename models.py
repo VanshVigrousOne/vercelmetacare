@@ -196,8 +196,9 @@ class DoctorAlert(Base):
     source = Column(String)         # AutoTrend | System | CHW | VisitRequest
     is_resolved = Column(Boolean, default=False)
     # Visit escalation flow
-    visit_request_status = Column(String)               # Requested | Accepted | Rejected
+    visit_request_status = Column(String)               # Requested | Accepted | Declined
     visit_requested_by = Column(String)                 # CHW name
+    chw_acknowledged = Column(Boolean, default=False)    # CHW has seen & cleared the doctor's response (Accepted/Declined) from their queue
     created_at = Column(DateTime, default=datetime.utcnow)
 
     patient = relationship("Patient", back_populates="alerts")
@@ -208,7 +209,7 @@ class Notification(Base):
     __tablename__ = "notifications"
 
     id = Column(Integer, primary_key=True, index=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"))
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
     sent_by = Column(String)        # CHW | Doctor | System
     sent_by_name = Column(String)
     message = Column(Text)
