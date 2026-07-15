@@ -1391,9 +1391,23 @@ function getActiveAlerts() { return db.alerts.filter(a => !a.is_resolved).sort((
 function getNotifications(pid) { return db.notifications.filter(n => n.patient_id === pid).sort((a,b) => new Date(b.created_at) - new Date(a.created_at)); }
 function getActivePrescription(pid) { return db.prescriptions.find(p => p.patient_id === pid && p.active); }
 function classColor(c, criticalSugar) { return c==='Emergency'||criticalSugar?'b-red':c==='Needs Follow Up'?'b-amber':'b-green'; }
+// Backend timestamps (created_at etc.) are real UTC instants but serialized
+// without a timezone suffix (e.g. "2026-07-15T11:11:08"). JS treats a
+// date-time string with no 'Z'/offset as *local* time, not UTC — so every
+// "created_at" silently gets shifted by the browser's UTC offset (e.g. looks
+// ~5.5h old immediately after creation for IST users). Force UTC parsing by
+// appending 'Z' when the string doesn't already specify a timezone.
+// NOTE: this is only for server-stamped instants (created_at). Visit/test
+// dates are deliberately stored as naive local wall-clock time (see
+// toLocalIso above) and should keep parsing as local — don't apply this there.
+function parseServerTime(iso) {
+  if (!iso) return null;
+  const hasTz = /Z$|[+-]\d{2}:?\d{2}$/.test(iso);
+  return new Date(hasTz ? iso : iso + 'Z');
+}
 function timeAgo(iso) {
   if (!iso) return '';
-  const d = Math.floor((Date.now() - new Date(iso)) / 1000);
+  const d = Math.floor((Date.now() - parseServerTime(iso)) / 1000);
   if (d < 60) return 'just now';
   if (d < 3600) return Math.floor(d/60)+'m ago';
   if (d < 86400) return Math.floor(d/3600)+'h ago';
@@ -1991,7 +2005,7 @@ function renderPatientOverviewTab(patient, logs, rx, unread) {
         ${logs.length===0?'<div class="muted">No readings yet.</div>':logs.slice(0,7).reverse().map(l=>{
           const h = l.blood_sugar?Math.round((l.blood_sugar/400)*76):4;
           const col = l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';
-          return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;
+          return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${parseServerTime(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;
         }).join('')}
       </div>
     </div>
@@ -2014,7 +2028,7 @@ function renderPatientReportTab(patient, rx) {
 }
 
 function renderPatientHistoryTab(patient, logs) {
-  return `<div class="card"><div class="card-title">📈 Blood Sugar History (Last 14 Days)</div><div class="chart-bar-wrap" style="height:100px">${logs.slice(0,14).reverse().map(l=>{const h = l.blood_sugar?Math.round((l.blood_sugar/400)*96):4;const col = l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:9px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label" style="font-size:9px">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div></div><div class="card"><div class="card-title">All Reports</div>${logs.length===0?`<div class="muted">No reports yet.</div>`:logs.map(l=>`<div style="padding:10px 0;border-bottom:0.5px solid var(--color-border-tertiary)"><div class="flex-between"><div class="flex" style="gap:8px"><span class="badge ${l.blood_sugar>250?'b-red':l.blood_sugar>180?'b-amber':'b-green'}">${l.blood_sugar||'—'} mg/dL</span><span class="badge ${l.medication_taken?'b-green':'b-gray'}">${l.medication_taken?'Meds ✓':'Meds ✗'}</span></div><span class="muted" style="font-size:11px">${timeAgo(l.created_at)}</span></div>${l.raw_text?`<div style="margin-top:4px;font-size:13px;color:var(--color-text-secondary);font-style:italic">"${l.raw_text}"</div>`:''}</div>`).join('')}</div>`;
+  return `<div class="card"><div class="card-title">📈 Blood Sugar History (Last 14 Days)</div><div class="chart-bar-wrap" style="height:100px">${logs.slice(0,14).reverse().map(l=>{const h = l.blood_sugar?Math.round((l.blood_sugar/400)*96):4;const col = l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:9px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label" style="font-size:9px">${parseServerTime(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div></div><div class="card"><div class="card-title">All Reports</div>${logs.length===0?`<div class="muted">No reports yet.</div>`:logs.map(l=>`<div style="padding:10px 0;border-bottom:0.5px solid var(--color-border-tertiary)"><div class="flex-between"><div class="flex" style="gap:8px"><span class="badge ${l.blood_sugar>250?'b-red':l.blood_sugar>180?'b-amber':'b-green'}">${l.blood_sugar||'—'} mg/dL</span><span class="badge ${l.medication_taken?'b-green':'b-gray'}">${l.medication_taken?'Meds ✓':'Meds ✗'}</span></div><span class="muted" style="font-size:11px">${timeAgo(l.created_at)}</span></div>${l.raw_text?`<div style="margin-top:4px;font-size:13px;color:var(--color-text-secondary);font-style:italic">"${l.raw_text}"</div>`:''}</div>`).join('')}</div>`;
 }
 
 function renderPatientMessagesTab(patient, notifs, unread) {
@@ -2039,7 +2053,7 @@ function renderMealTimesTable(mealTimes) {
 function renderPatientDietTab(patient) {
   const diet = state.dietPlans[patient.id] || {};
   const foodLogs = state.foodLogs[patient.id] || [];
-  const todayLogs = foodLogs.filter(f => new Date(f.created_at).toDateString() === new Date().toDateString());
+  const todayLogs = foodLogs.filter(f => parseServerTime(f.created_at).toDateString() === new Date().toDateString());
   const totalCal = todayLogs.reduce((s,f)=>s+(f.calories||0),0);
   const totalProtein = todayLogs.reduce((s,f)=>s+(f.protein||0),0);
   return `<div class="card"><div class="card-title">🥗 Your Personalised Diet Plan / आपकी आहार योजना</div><div class="info-banner" style="margin-bottom:1rem"><span>ℹ️</span><span>${diet.planName || 'Diet plan set by your Doctor for Type 2 Diabetes management'}${diet.bmiGroup?` · BMI Group ${diet.bmiGroup}${diet.bmiValue?` (BMI ${diet.bmiValue})`:''}`:''}</span></div>
@@ -2051,7 +2065,7 @@ function renderPatientDietTab(patient) {
   ${patient.exercise_plan?`<div class="card"><div class="card-title">🏃 Recommended Exercise</div><div style="font-size:13px;line-height:1.6">${patient.exercise_plan}</div>${patient.exercise_updated_by_name?`<div class="muted" style="margin-top:6px;font-size:11px">Set by ${patient.exercise_updated_by_name}</div>`:''}
     ${(() => {
       const exLogs = state.exerciseLogs[patient.id] || [];
-      const todayEx = exLogs.filter(e => new Date(e.created_at).toDateString() === new Date().toDateString());
+      const todayEx = exLogs.filter(e => parseServerTime(e.created_at).toDateString() === new Date().toDateString());
       const doneToday = todayEx.length > 0 && todayEx[0].completed;
       const missedToday = todayEx.length > 0 && !todayEx[0].completed;
       return `<div style="margin-top:10px">
@@ -2246,7 +2260,7 @@ function renderAlertDetail(a) {
       <div style="font-size:13px;font-weight:500;margin-bottom:.75rem;color:${a.alert_reason.includes('Emergency')?'#A32D2D':'var(--color-text-primary)'}">⚠ ${a.alert_reason}</div>
       ${task&&task.raw_patient_text?`<div class="form-label" style="margin-bottom:4px">Patient's own words</div><div class="quote-block">"${task.raw_patient_text}"</div>`:''}${task&&task.chw_validated_note?`<div class="chw-label">CHW validated note</div><div class="chw-block">${task.chw_validated_note}</div>`:''}
       <div class="ai-label"><span>🤖</span> AI clinical context</div><div class="ai-block">${a.doctor_context||'No AI context.'}</div>
-      <hr class="sep"><div class="card-title">Blood sugar trend</div><div class="chart-bar-wrap">${logs.slice(0,7).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*72):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>
+      <hr class="sep"><div class="card-title">Blood sugar trend</div><div class="chart-bar-wrap">${logs.slice(0,7).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*72):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${parseServerTime(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>
       <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Accept Case & Schedule Clinic Visit</div>
       <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Appointment Date</div><input type="date" id="docVisitDate" value="${new Date(Date.now()+3*86400000).toISOString().split('T')[0]}"></div><div><div class="form-label">Time</div><select id="docVisitTime">${generateTimeOptions()}</select></div></div>
       <div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Visit Type</div><select id="docVisitType" onchange="toggleMeetingField('docVisit')"><option value="Physical Visit">Physical Visit</option><option value="Teleconsultation">Teleconsultation</option></select></div><div><div class="form-label">Duration</div><select id="docVisitDuration"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">60 min</option></select></div></div>
@@ -2428,7 +2442,7 @@ function renderProviderOverviewTab(p, logs, rx, openTasks, activeAlerts) {
     ${activeAlerts.length>0?`<div class="form-label" style="color:#A32D2D;margin-bottom:8px">ACTIVE ALERTS</div>${activeAlerts.map(a=>`<div style="background:#FCEBEB;border-radius:8px;padding:10px;margin-bottom:8px;${isDoctor?'cursor:pointer':''}" ${isDoctor?`onclick="state.selectedAlert=${a.id};state.selectedPatient=null;renderContent()"`:''}><div style="font-weight:500;font-size:13px;color:#791F1F">${a.alert_reason}</div><div style="font-size:11px;color:#A32D2D;margin-top:4px">${timeAgo(a.created_at)}${!isDoctor?' · Sent to doctor — view only':''}</div></div>`).join('')}`:''}
     ${openTasks.length>0?`<div class="form-label" style="margin-bottom:8px">OPEN TASKS</div>${openTasks.map(t=>`<div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer" onclick="state.selectedTask=${t.id};state.selectedPatient=null;renderContent()"><div class="flex-between"><span style="font-weight:500;font-size:13px">${t.task_type}</span><span class="badge ${classColor(t.ai_classification, t.critical_sugar_alert)}">${t.ai_classification}</span></div><div style="font-size:12px;color:var(--color-text-secondary);margin-top:4px">${(t.ai_summary||'').slice(0,80)}...</div></div>`).join('')}`:''}
     <div class="grid4" style="margin-bottom:12px"><div class="metric"><div class="metric-label">Latest Sugar</div><div class="metric-val" style="color:${lastLog?.blood_sugar>250?'#E24B4A':lastLog?.blood_sugar>180?'#EF9F27':'#1D9E75'}">${lastLog?.blood_sugar||'—'}</div><div class="metric-sub">mg/dL</div></div><div class="metric"><div class="metric-label">HbA1c</div><div class="metric-val">${p.hba1c||'—'}</div><div class="metric-sub">%</div></div><div class="metric"><div class="metric-label">Next Visit</div><div class="metric-val" style="font-size:14px">${upcomingVisits[0]?fmtDate(upcomingVisits[0].date):'None'}</div><div class="metric-sub">${upcomingVisits[0]?.type||''}</div></div><div class="metric"><div class="metric-label">Pending Tests</div><div class="metric-val">${pendingTests.length}</div><div class="metric-sub">due</div></div></div>
-    <div class="card-title">Blood Sugar Trend (7 Days)</div><div class="chart-bar-wrap" style="margin-bottom:1rem">${logs.slice(0,7).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*76):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>
+    <div class="card-title">Blood Sugar Trend (7 Days)</div><div class="chart-bar-wrap" style="margin-bottom:1rem">${logs.slice(0,7).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*76):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${parseServerTime(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>
     ${rx?`<div class="card-title">Current Prescription</div><div style="background:var(--color-background-secondary);padding:10px;border-radius:8px;font-size:13px;margin-bottom:1rem"><div style="font-weight:500">${rx.medication_name}</div><div class="muted">${rx.dosage}</div>${rx.instructions?`<div class="muted" style="font-style:italic">${rx.instructions}</div>`:''}</div>`:''}
     ${renderDieticianAssignCard(p)}
     ${renderPatientDetailsCard(p)}`;
@@ -2677,7 +2691,7 @@ function renderProviderDietTab(p, sess) {
 function renderProviderAdherenceSection(p) {
   const foodLogs = state.foodLogs[p.id] || [];
   const exLogs = state.exerciseLogs[p.id] || [];
-  const todayFood = foodLogs.filter(f => new Date(f.created_at).toDateString() === new Date().toDateString());
+  const todayFood = foodLogs.filter(f => parseServerTime(f.created_at).toDateString() === new Date().toDateString());
   const totalCal = todayFood.reduce((s,f)=>s+(f.calories||0),0);
   const totalProtein = todayFood.reduce((s,f)=>s+(f.protein||0),0);
   return `
@@ -2711,7 +2725,7 @@ async function generateClinicalDietPlan(patientId) {
 }
 
 function renderProviderHistoryTab(p, logs) {
-  return `<div class="chart-bar-wrap" style="height:100px;margin-bottom:1rem">${logs.slice(0,14).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*96):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:9px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label" style="font-size:9px">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>${logs.length===0?`<div class="muted">No history yet.</div>`:logs.map(l=>`<div style="padding:10px 0;border-bottom:0.5px solid var(--color-border-tertiary)"><div class="flex-between"><div class="flex" style="gap:8px"><span class="badge ${l.blood_sugar>250?'b-red':l.blood_sugar>180?'b-amber':'b-green'}">${l.blood_sugar||'—'} mg/dL</span><span class="badge ${l.medication_taken?'b-green':'b-gray'}">${l.medication_taken?'Meds ✓':'Meds ✗'}</span></div><span class="muted" style="font-size:11px">${timeAgo(l.created_at)}</span></div>${l.raw_text?`<div style="margin-top:6px;font-size:13px;color:var(--color-text-secondary);font-style:italic">"${l.raw_text}"</div>`:''}</div>`).join('')}`;
+  return `<div class="chart-bar-wrap" style="height:100px;margin-bottom:1rem">${logs.slice(0,14).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*96):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:9px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label" style="font-size:9px">${parseServerTime(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>${logs.length===0?`<div class="muted">No history yet.</div>`:logs.map(l=>`<div style="padding:10px 0;border-bottom:0.5px solid var(--color-border-tertiary)"><div class="flex-between"><div class="flex" style="gap:8px"><span class="badge ${l.blood_sugar>250?'b-red':l.blood_sugar>180?'b-amber':'b-green'}">${l.blood_sugar||'—'} mg/dL</span><span class="badge ${l.medication_taken?'b-green':'b-gray'}">${l.medication_taken?'Meds ✓':'Meds ✗'}</span></div><span class="muted" style="font-size:11px">${timeAgo(l.created_at)}</span></div>${l.raw_text?`<div style="margin-top:6px;font-size:13px;color:var(--color-text-secondary);font-style:italic">"${l.raw_text}"</div>`:''}</div>`).join('')}`;
 }
 
 function renderDoctorManageTab(p, rx) {
