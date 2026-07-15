@@ -108,6 +108,21 @@ def _run_auto_migrations():
                     "(SELECT patients.doctor_id FROM patients WHERE patients.id = clinic_visits.patient_id) "
                     "WHERE provider_id IS NULL"
                 )
+
+            if is_sqlite:
+                alert_cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(doctor_alerts)").fetchall()]
+            else:
+                alert_cols = [
+                    row[0] for row in conn.exec_driver_sql(
+                        "SELECT column_name FROM information_schema.columns WHERE table_name = 'doctor_alerts'"
+                    ).fetchall()
+                ]
+            if "chw_acknowledged" not in alert_cols:
+                stmt = "ALTER TABLE doctor_alerts ADD COLUMN " + (
+                    "chw_acknowledged BOOLEAN DEFAULT 0" if is_sqlite
+                    else "IF NOT EXISTS chw_acknowledged BOOLEAN DEFAULT FALSE"
+                )
+                conn.exec_driver_sql(stmt)
             conn.commit()
     except Exception as exc:
         logger.warning(f"Skipping auto-migration check: {exc}")
@@ -1037,6 +1052,29 @@ def resolve_alert(
     return alert
 
 
+@app.post("/alerts/{alert_id}/acknowledge", response_model=schemas.AlertOut, tags=["Alerts"])
+def acknowledge_alert(
+    alert_id: int,
+    db: Session = Depends(get_db),
+    chw: models.CHW = Depends(auth.require_chw),
+):
+    """CHW clears an already-resolved visit request (doctor Accepted/Declined it)
+    out of their own queue. Doesn't touch is_resolved/visit_request_status —
+    just hides it from this CHW's view, same list the request itself lives in."""
+    alert = db.query(models.DoctorAlert).filter(models.DoctorAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    patient = db.query(models.Patient).filter(models.Patient.id == alert.patient_id).first()
+    if not patient or patient.chw_id != chw.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not alert.is_resolved:
+        raise HTTPException(status_code=400, detail="Only a resolved (Accepted/Declined/Closed) request can be dismissed")
+    alert.chw_acknowledged = True
+    db.commit()
+    db.refresh(alert)
+    return alert
+
+
 @app.post("/alerts/resolve-dismissable", response_model=schemas.BulkResolveOut, tags=["Alerts"])
 def resolve_all_dismissable_alerts(
     db: Session = Depends(get_db),
@@ -1057,17 +1095,30 @@ def resolve_all_dismissable_alerts(
         .join(models.Patient, models.Patient.id == models.DoctorAlert.patient_id)
         .filter(
             models.Patient.chw_id == user.id,
-            models.DoctorAlert.is_resolved == False,
-            models.DoctorAlert.source == "PatientVisitRequest",
+            models.DoctorAlert.source.in_(["PatientVisitRequest", "VisitRequest"]),
+        )
+        .filter(
+            (models.DoctorAlert.is_resolved == False) | (models.DoctorAlert.chw_acknowledged == False)
         )
     )
     alerts = q.all()
+    count = 0
     for alert in alerts:
-        alert.is_resolved = True
-        if alert.visit_request_status == "Requested":
-            alert.visit_request_status = "Closed"
+        if not alert.is_resolved:
+            # Only ever auto-resolves the CHW's own dismissable queue — a
+            # patient's own self-requested visit. A CHW-raised VisitRequest
+            # still awaiting the doctor stays untouched here.
+            if alert.source != "PatientVisitRequest":
+                continue
+            alert.is_resolved = True
+            if alert.visit_request_status == "Requested":
+                alert.visit_request_status = "Closed"
+            count += 1
+        elif not alert.chw_acknowledged:
+            alert.chw_acknowledged = True
+            count += 1
     db.commit()
-    return {"resolved_count": len(alerts)}
+    return {"resolved_count": count}
 
 
 # VISIT ESCALATION  (CHW requests a doctor visit → Doctor accepts & schedules)
@@ -1116,7 +1167,12 @@ def request_visit(
         provider_id=patient.doctor_id,
         visit_type=payload.visit_type,
         visit_date=proposed_date or (datetime.utcnow() + __import__("datetime").timedelta(days=1)),  # provisional
-        status="Scheduled",
+        # Stays "Requested" — NOT a confirmed booking — until the doctor actually
+        # accepts via /alerts/{id}/accept-visit. Only then does it flip to
+        # "Scheduled" and show up in anyone's "Upcoming" list. This is what makes
+        # the CHW->doctor flow a real request/accept handshake instead of the CHW
+        # silently auto-booking the doctor's calendar.
+        status="Requested",
         reason=payload.reason,
         duration_minutes=payload.duration_minutes,
         doctor_accepted=False,
@@ -1175,7 +1231,11 @@ def accept_visit(
     # Find the provisional clinic visit tied to this request, or create one
     visit = (
         db.query(models.ClinicVisit)
-        .filter(models.ClinicVisit.patient_id == alert.patient_id, models.ClinicVisit.doctor_accepted == False)
+        .filter(
+            models.ClinicVisit.patient_id == alert.patient_id,
+            models.ClinicVisit.doctor_accepted == False,
+            models.ClinicVisit.status == "Requested",
+        )
         .order_by(models.ClinicVisit.created_at.desc())
         .first()
     )
@@ -1208,6 +1268,8 @@ def accept_visit(
     visit.doctor_accepted = True
     visit.chw_notified_acceptance = True
     visit.duration_minutes = payload.duration_minutes
+    if payload.visit_type in ("Physical Visit", "Teleconsultation"):
+        visit.visit_type = payload.visit_type
     if payload.notes:
         visit.reason = (visit.reason or "") + f" | Tests: {payload.notes}"
     if visit.visit_type == "Teleconsultation" and payload.meeting_id:
@@ -1217,7 +1279,8 @@ def accept_visit(
     alert.is_resolved = True
 
     # Notify patient
-    accept_msg = f"Dr. {doctor.name} ne aapka clinic visit confirm kar diya hai: {payload.visit_date.strftime('%d %b %Y')}."
+    mode_label = "Teleconsultation" if visit.visit_type == "Teleconsultation" else "clinic visit"
+    accept_msg = f"Dr. {doctor.name} ne aapka {mode_label} confirm kar diya hai: {payload.visit_date.strftime('%d %b %Y, %I:%M %p')}."
     if visit.meeting_link:
         accept_msg += f" Join link: {visit.meeting_link}"
     db.add(models.Notification(
@@ -1231,6 +1294,57 @@ def accept_visit(
     db.commit()
     db.refresh(visit)
     return visit
+
+
+@app.post("/alerts/{alert_id}/decline-visit", response_model=schemas.AlertOut, tags=["Visits"])
+def decline_visit(
+    alert_id: int,
+    payload: schemas.VisitDeclineRequest,
+    db: Session = Depends(get_db),
+    doctor: models.Doctor = Depends(auth.require_doctor),
+):
+    """Doctor declines a CHW/patient-requested visit. Cancels the provisional
+    ClinicVisit (it never becomes a real booking) and notifies the CHW/patient
+    so the request doesn't just silently vanish."""
+    alert = db.query(models.DoctorAlert).filter(models.DoctorAlert.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    if alert.doctor_id != doctor.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    visit = (
+        db.query(models.ClinicVisit)
+        .filter(
+            models.ClinicVisit.patient_id == alert.patient_id,
+            models.ClinicVisit.doctor_accepted == False,
+            models.ClinicVisit.status == "Requested",
+        )
+        .order_by(models.ClinicVisit.created_at.desc())
+        .first()
+    )
+    if visit:
+        visit.status = "Cancelled"
+
+    alert.visit_request_status = "Declined"
+    alert.is_resolved = True
+
+    patient = db.query(models.Patient).filter(models.Patient.id == alert.patient_id).first()
+    decline_msg = f"Dr. {doctor.name} is abhi is visit request ko accept nahi kar paaye"
+    if payload.reason:
+        decline_msg += f": {payload.reason}"
+    decline_msg += ". Kripya CHW se sampark karein."
+    if patient:
+        db.add(models.Notification(
+            patient_id=patient.id,
+            sent_by="Doctor",
+            sent_by_name=doctor.name,
+            message=decline_msg,
+            notif_type="visit_declined",
+        ))
+
+    db.commit()
+    db.refresh(alert)
+    return alert
 
 
 # NOTIFICATIONS
