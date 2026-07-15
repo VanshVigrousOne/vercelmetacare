@@ -506,7 +506,17 @@ async function fetchPatientSpecificData(pId) {
   } catch(e) { console.error("Error fetching patient specific data", e); }
 }
 
+let _fetchAllDataInFlight = null;
 async function fetchAllData() {
+  // Guard against overlapping calls: fetchAllData wipes the shared `db` object
+  // before refilling it, so two concurrent calls (e.g. from a double-click on
+  // "Mark resolved") can interleave and leave `db` briefly empty mid-render.
+  // If a call is already running, piggy-back on it instead of starting a new one.
+  if (_fetchAllDataInFlight) return _fetchAllDataInFlight;
+  _fetchAllDataInFlight = _fetchAllDataImpl().finally(() => { _fetchAllDataInFlight = null; });
+  return _fetchAllDataInFlight;
+}
+async function _fetchAllDataImpl() {
   const sess = getSession();
   const userId = sess.userId;
   db = { patients:[], chws:[], dieticians:[], availablePatients:[], logs:[], tasks:[], alerts:[], notifications:[], prescriptions:[], events:[] };
@@ -1135,9 +1145,38 @@ async function suggestPrescription(patientId) {
   state.loading['rx_'+patientId] = false; renderTabs(); renderSidebar(); renderContent();
 }
 
-async function resolveTask(taskId) { try { await api(`/tasks/${taskId}/resolve`, 'POST'); await fetchAllData(); state.selectedTask=null; renderTabs(); renderSidebar(); renderContent(); } catch(e){} }
-async function escalateTask(taskId) { try { await api(`/tasks/${taskId}/escalate`, 'POST'); await fetchAllData(); state.selectedTask=null; renderTabs(); renderSidebar(); renderContent(); } catch(e){} }
-async function resolveAlert(alertId) { try { await api(`/alerts/${alertId}/resolve`, 'POST'); await fetchAllData(); state.selectedAlert=null; renderTabs(); renderSidebar(); renderContent(); } catch(e){} }
+async function resolveTask(taskId) {
+  if (state.loading['resolveTask_'+taskId] || state.loading['escalateTask_'+taskId]) return;
+  state.loading['resolveTask_'+taskId] = true; renderContent();
+  try { await api(`/tasks/${taskId}/resolve`, 'POST'); await fetchAllData(); state.selectedTask=null; }
+  catch(e) { alert('Failed: ' + e.message); }
+  state.loading['resolveTask_'+taskId] = false;
+  renderTabs(); renderSidebar(); renderContent();
+}
+async function escalateTask(taskId) {
+  if (state.loading['resolveTask_'+taskId] || state.loading['escalateTask_'+taskId]) return;
+  state.loading['escalateTask_'+taskId] = true; renderContent();
+  try { await api(`/tasks/${taskId}/escalate`, 'POST'); await fetchAllData(); state.selectedTask=null; }
+  catch(e) { alert('Failed: ' + e.message); }
+  state.loading['escalateTask_'+taskId] = false;
+  renderTabs(); renderSidebar(); renderContent();
+}
+async function resolveAlert(alertId) {
+  if (state.loading['resolveAlert_'+alertId]) return;
+  state.loading['resolveAlert_'+alertId] = true; renderContent();
+  try { await api(`/alerts/${alertId}/resolve`, 'POST'); await fetchAllData(); state.selectedAlert=null; }
+  catch(e) { alert('Failed: ' + e.message); }
+  state.loading['resolveAlert_'+alertId] = false;
+  renderTabs(); renderSidebar(); renderContent();
+}
+async function resolveAllDismissable() {
+  if (state.loading.resolveAllDismissable) return;
+  state.loading.resolveAllDismissable = true; renderContent();
+  try { await api('/alerts/resolve-dismissable', 'POST'); await fetchAllData(); }
+  catch(e) { alert('Failed: ' + e.message); }
+  state.loading.resolveAllDismissable = false;
+  renderTabs(); renderSidebar(); renderContent();
+}
 
 async function issuePrescription(patientId) {
   const wasUpdate = !!getActivePrescription(patientId);
@@ -2018,7 +2057,38 @@ function renderCHWView(el) {
     <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:1rem;align-items:start"><div>
       ${tasks.length===0?`<div class="card"><div class="muted">No pending tasks. All patients stable.</div></div>`:''}
       ${tasks.map(t=>{const p = getPatient(t.patient_id); return `<div class="task-card ${state.selectedTask===t.id?'selected':''}" onclick="state.selectedTask=${t.id};state.selectedPatient=null;renderContent()"><div class="flex-between" style="margin-bottom:4px"><span style="font-size:13px;font-weight:500">${p?p.name:'Unknown'}</span><span class="badge ${classColor(t.ai_classification, t.critical_sugar_alert)}">${t.ai_classification}</span></div><div style="font-size:12px;color:var(--color-text-secondary);margin-bottom:4px">${t.task_type}</div>${t.critical_sugar_alert?`<div class="badge b-red" style="margin-bottom:4px">🚨 Critical Sugar Reading</div>`:''}${t.raw_patient_text?`<div style="font-size:12px;font-style:italic;color:var(--color-text-secondary)">"${t.raw_patient_text.slice(0,60)}..."</div>`:''}<div style="margin-top:4px;font-size:11px;color:var(--color-text-secondary)">${timeAgo(t.created_at)}</div></div>`;}).join('')}
-      ${db.patients.map(p => { const vReqs = (state.visitRequests[p.id]||[]).filter(r=>r.status==='Pending Doctor Response'); if (!vReqs.length) return ''; return vReqs.map(r=>`<div class="task-card" style="border-left:3px solid #EF9F27" onclick="state.selectedPatient=${p.id};state.selectedTask=null;state.providerPatientTab='visits';renderContent()"><div class="flex-between" style="margin-bottom:4px"><span style="font-size:13px;font-weight:500">${p.name}</span><span class="badge b-amber">${r.requestedByRole==='Patient'?'Patient requested visit':'Visit Request'}</span></div><div style="font-size:12px;color:var(--color-text-secondary)">${r.reason}</div><div style="font-size:11px;color:#EF9F27;margin-top:4px">Urgency: ${r.urgency}</div></div>`).join(''); }).join('')}
+      ${(() => {
+        // Every patient's pending self-requested visit, flattened into one list.
+        // With hundreds/thousands of patients this can grow large, so it's
+        // capped per page with a "Show more" control instead of dumping
+        // everything into the DOM at once.
+        const allVReqs = [];
+        db.patients.forEach(p => (state.visitRequests[p.id]||[]).filter(r=>r.status==='Pending Doctor Response').forEach(r => allVReqs.push({p, r})));
+        const shown = state.chwVisitReqPageSize || 10;
+        const visible = allVReqs.slice(0, shown);
+        const remaining = allVReqs.length - visible.length;
+        const dismissableCount = allVReqs.filter(({r}) => r.requestedByRole === 'Patient').length;
+        // Once there's more than a couple of these, dismissing one at a time
+        // doesn't scale to a real patient panel — offer a single bulk action
+        // instead. Only ever touches the CHW's own dismissable queue.
+        const dismissAllHeader = dismissableCount > 1 ? `<div class="flex-between" style="margin-bottom:6px">
+          <span style="font-size:12px;color:var(--color-text-secondary)">${dismissableCount} handled visit request${dismissableCount!==1?'s':''} to clear</span>
+          <button class="btn btn-small" ${state.loading.resolveAllDismissable?'disabled':''} onclick="resolveAllDismissable()">${state.loading.resolveAllDismissable?'<span class="spinner"></span>Clearing...':'✓ Dismiss all handled'}</button>
+        </div>` : '';
+        return dismissAllHeader + visible.map(({p, r}) => {
+          // Only a patient's own self-requested visit can be dismissed by the
+          // CHW directly (that's the alert type routed to them). A visit the
+          // CHW themselves already escalated to the doctor stays open until
+          // the doctor acts on it.
+          const dismissable = r.requestedByRole === 'Patient';
+          const busy = state.loading['resolveAlert_'+r.id];
+          return `<div class="task-card" style="border-left:3px solid #EF9F27" onclick="state.selectedPatient=${p.id};state.selectedTask=null;state.providerPatientTab='visits';renderContent()">
+            <div class="flex-between" style="margin-bottom:4px"><span style="font-size:13px;font-weight:500">${p.name}</span><span class="badge b-amber">${r.requestedByRole==='Patient'?'Patient requested visit':'Visit Request'}</span></div>
+            <div style="font-size:12px;color:var(--color-text-secondary)">${r.reason}</div>
+            <div class="flex-between" style="margin-top:4px"><span style="font-size:11px;color:#EF9F27">Urgency: ${r.urgency}</span>${dismissable?`<button class="btn btn-small" ${busy?'disabled':''} onclick="event.stopPropagation();resolveAlert(${r.id})">${busy?'<span class="spinner"></span>':'✓ Handled — dismiss'}</button>`:''}</div>
+          </div>`;
+        }).join('') + (remaining > 0 ? `<button class="btn" style="width:100%;margin-top:4px" onclick="state.chwVisitReqPageSize=${shown+10};renderContent()">Show ${Math.min(remaining,10)} more (${remaining} left)</button>` : '');
+      })()}
     </div><div id="taskDetail">${sel ? renderTaskDetail(sel) : state.selectedPatient ? renderProviderPatientView(state.selectedPatient) : `<div class="card"><div class="muted" style="text-align:center;padding:2rem">← Select a task or patient to review</div></div>`}</div></div>`;
 }
 
@@ -2119,7 +2189,7 @@ function renderTaskDetail(t) {
       <div class="flex" style="gap:8px;margin-bottom:.75rem"><button class="btn btn-blue" onclick="scheduleVisit(${t.patient_id},false,'v_')" style="flex:1">📅 Schedule Visit</button><button class="btn btn-amber" onclick="requestDoctorVisit(${t.patient_id})" style="flex:1">⬆ Request Doctor Appointment</button></div>
       <hr class="sep"><div class="form-label">Send message to patient</div><textarea id="notifMsg" rows="2" placeholder="e.g. Ramesh ji, please check sugar…" style="margin-bottom:8px"></textarea><button class="btn" onclick="sendNotification(${t.patient_id})" style="margin-bottom:.75rem">${state.loading['notif_'+t.patient_id]?'<span class="spinner"></span>Sending...':'📲 Send message to patient'}</button>
       <hr class="sep"><div class="form-label">Suggest prescription to doctor</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Medication</div><input type="text" id="rxMed" placeholder="e.g. Glipizide 5mg"></div><div><div class="form-label">Dosage</div><input type="text" id="rxDose" placeholder="e.g. Once daily"></div></div><button class="btn btn-amber" onclick="suggestPrescription(${t.patient_id})" style="margin-bottom:.75rem">${state.loading['rx_'+t.patient_id]?'<span class="spinner"></span>Sending...':'💊 Suggest prescription to doctor ↗'}</button>
-      <hr class="sep"><div class="flex" style="gap:8px;margin-top:4px"><button class="btn" style="flex:1" onclick="resolveTask(${t.id})">✓ Mark resolved</button><button class="btn btn-danger" style="flex:1" onclick="escalateTask(${t.id})">🚨 Escalate to doctor</button></div>
+      <hr class="sep"><div class="flex" style="gap:8px;margin-top:4px"><button class="btn" style="flex:1" ${state.loading['resolveTask_'+t.id]||state.loading['escalateTask_'+t.id]?'disabled':''} onclick="resolveTask(${t.id})">${state.loading['resolveTask_'+t.id]?'<span class="spinner"></span>Resolving...':'✓ Mark resolved'}</button><button class="btn btn-danger" style="flex:1" ${state.loading['resolveTask_'+t.id]||state.loading['escalateTask_'+t.id]?'disabled':''} onclick="escalateTask(${t.id})">${state.loading['escalateTask_'+t.id]?'<span class="spinner"></span>Escalating...':'🚨 Escalate to doctor'}</button></div>
     </div>
     <div class="card" style="margin-top:0"><div class="card-title">Recent vitals — ${p?p.name:''}</div>${logs.slice(0,5).map(l=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px"><span class="badge ${l.blood_sugar>250?'b-red':l.blood_sugar>180?'b-amber':'b-green'}">${l.blood_sugar||'—'}</span><span class="badge ${l.medication_taken?'b-green':'b-gray'}">${l.medication_taken?'Meds ✓':'Meds ✗'}</span><span class="muted">${l.raw_text?`"${l.raw_text.slice(0,40)}..."`:''}</span><span class="muted" style="margin-left:auto">${timeAgo(l.created_at)}</span></div>`).join('')}${rx?`<div style="margin-top:8px;font-size:12px;color:var(--color-text-secondary)">Current Rx: ${rx.medication_name} — ${rx.dosage}</div>`:''}</div>`;
 }
@@ -2141,7 +2211,7 @@ function renderAlertDetail(a) {
       <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Set / Update Diet Plan</div><textarea id="dietBreakfast" rows="2" placeholder="Breakfast items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.breakfast||[]).join(', ')}</textarea><textarea id="dietLunch" rows="2" placeholder="Lunch items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.lunch||[]).join(', ')}</textarea><textarea id="dietDinner" rows="2" placeholder="Dinner items..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.dinner||[]).join(', ')}</textarea><textarea id="dietAvoid" rows="1" placeholder="Foods to avoid (comma separated)..." style="margin-bottom:6px">${(state.dietPlans[a.patient_id]?.avoid||[]).join(', ')}</textarea><textarea id="dietNotes" rows="1" placeholder="General diet notes..." style="margin-bottom:8px">${state.dietPlans[a.patient_id]?.notes||''}</textarea><button class="btn btn-blue" onclick="saveDietPlan(${a.patient_id})" style="margin-bottom:.75rem">🥗 Save diet plan → notifies patient</button>${state['dietSaved_'+a.patient_id]?`<div class="success-banner" style="margin-bottom:.75rem">✓ Diet plan saved and patient notified!</div>`:''}
       <hr class="sep"><div class="form-label" style="color:#0F6E56;margin-bottom:8px">Order Tests</div><input type="text" id="testOrder" placeholder="e.g. HbA1c, Creatinine, Lipid Profile" style="margin-bottom:6px"><input type="date" id="testDueDate" value="${new Date(Date.now()+7*86400000).toISOString().split('T')[0]}" style="margin-bottom:8px"><button class="btn btn-blue" onclick="orderTests(${a.patient_id})" style="margin-bottom:.75rem">🧪 Order tests → notifies patient & CHW</button>
       <hr class="sep"><div class="form-label">Deep AI analysis</div><textarea id="deepAiQ" rows="2" placeholder="e.g. 'Could this be hypoglycemia given the trend?'" style="margin-bottom:8px"></textarea><button class="btn" onclick="deepAnalysis(${a.patient_id},${a.id})" style="margin-bottom:.75rem">${state.loading['deepai_'+a.id]?'<span class="spinner"></span>Thinking...':'🤖 Get deeper AI analysis ↗'}</button>${state['deepAiResult_'+a.id]?`<div class="ai-block" style="margin-top:4px">${state['deepAiResult_'+a.id]}</div>`:''}
-      <hr class="sep"><button class="btn" style="width:100%" onclick="resolveAlert(${a.id})">✓ Mark alert resolved</button>
+      <hr class="sep"><button class="btn" style="width:100%" ${state.loading['resolveAlert_'+a.id]?'disabled':''} onclick="resolveAlert(${a.id})">${state.loading['resolveAlert_'+a.id]?'<span class="spinner"></span>Resolving...':'✓ Mark alert resolved'}</button>
     </div>`;
 }
 
@@ -2305,9 +2375,11 @@ function renderProviderPatientView(pid) {
 }
 
 function renderProviderOverviewTab(p, logs, rx, openTasks, activeAlerts) {
+  const sess = getSession();
+  const isDoctor = sess.role === 'doctor';
   const lastLog = logs[0]; const upcomingVisits = (state.visits[p.id]||[]).filter(v=>v.status==='Upcoming'||v.status==='Scheduled'); const pendingTests = (state.testResults[p.id]||[]).filter(t=>t.status==='Pending'||t.status==='Ordered');
   return `
-    ${activeAlerts.length>0?`<div class="form-label" style="color:#A32D2D;margin-bottom:8px">ACTIVE ALERTS</div>${activeAlerts.map(a=>`<div style="background:#FCEBEB;border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer" onclick="switchRole('Doctor');state.selectedAlert=${a.id};state.selectedPatient=null;renderContent()"><div style="font-weight:500;font-size:13px;color:#791F1F">${a.alert_reason}</div><div style="font-size:11px;color:#A32D2D;margin-top:4px">${timeAgo(a.created_at)}</div></div>`).join('')}`:''}
+    ${activeAlerts.length>0?`<div class="form-label" style="color:#A32D2D;margin-bottom:8px">ACTIVE ALERTS</div>${activeAlerts.map(a=>`<div style="background:#FCEBEB;border-radius:8px;padding:10px;margin-bottom:8px;${isDoctor?'cursor:pointer':''}" ${isDoctor?`onclick="state.selectedAlert=${a.id};state.selectedPatient=null;renderContent()"`:''}><div style="font-weight:500;font-size:13px;color:#791F1F">${a.alert_reason}</div><div style="font-size:11px;color:#A32D2D;margin-top:4px">${timeAgo(a.created_at)}${!isDoctor?' · Sent to doctor — view only':''}</div></div>`).join('')}`:''}
     ${openTasks.length>0?`<div class="form-label" style="margin-bottom:8px">OPEN TASKS</div>${openTasks.map(t=>`<div style="background:var(--color-background-secondary);border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer" onclick="state.selectedTask=${t.id};state.selectedPatient=null;renderContent()"><div class="flex-between"><span style="font-weight:500;font-size:13px">${t.task_type}</span><span class="badge ${classColor(t.ai_classification, t.critical_sugar_alert)}">${t.ai_classification}</span></div><div style="font-size:12px;color:var(--color-text-secondary);margin-top:4px">${(t.ai_summary||'').slice(0,80)}...</div></div>`).join('')}`:''}
     <div class="grid4" style="margin-bottom:12px"><div class="metric"><div class="metric-label">Latest Sugar</div><div class="metric-val" style="color:${lastLog?.blood_sugar>250?'#E24B4A':lastLog?.blood_sugar>180?'#EF9F27':'#1D9E75'}">${lastLog?.blood_sugar||'—'}</div><div class="metric-sub">mg/dL</div></div><div class="metric"><div class="metric-label">HbA1c</div><div class="metric-val">${p.hba1c||'—'}</div><div class="metric-sub">%</div></div><div class="metric"><div class="metric-label">Next Visit</div><div class="metric-val" style="font-size:14px">${upcomingVisits[0]?fmtDate(upcomingVisits[0].date):'None'}</div><div class="metric-sub">${upcomingVisits[0]?.type||''}</div></div><div class="metric"><div class="metric-label">Pending Tests</div><div class="metric-val">${pendingTests.length}</div><div class="metric-sub">due</div></div></div>
     <div class="card-title">Blood Sugar Trend (7 Days)</div><div class="chart-bar-wrap" style="margin-bottom:1rem">${logs.slice(0,7).reverse().map(l=>{const h=l.blood_sugar?Math.round((l.blood_sugar/400)*76):4;const col=l.blood_sugar>250?'#E24B4A':l.blood_sugar>180?'#EF9F27':'#1D9E75';return `<div class="chart-bar-col"><span style="font-size:10px;color:var(--color-text-secondary)">${l.blood_sugar||'—'}</span><div class="chart-bar" style="height:${h}px;background:${col}"></div><span class="chart-label">${new Date(l.created_at).toLocaleDateString('en-IN',{month:'short',day:'numeric'})}</span></div>`;}).join('')}</div>
