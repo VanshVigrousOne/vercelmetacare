@@ -143,6 +143,7 @@ textarea:focus,input:focus,select:focus{border-color:#0F6E56;box-shadow:0 0 0 2p
   <div class="topbar">
     <div class="logo">Meta<span>Care</span></div>
     <div class="role-tabs" id="roleTabs"></div>
+    <div id="google_translate_element" style="margin-left:8px"></div>
   </div>
   <div class="main" id="mainArea">
     <div class="setup-screen" id="setupScreen">
@@ -2738,5 +2739,49 @@ function renderDoctorManageTab(p, rx) {
   return `<div class="form-label" style="margin-bottom:8px;color:#0F6E56">Issue Prescription</div><div class="grid2" style="margin-bottom:8px"><div><div class="form-label">Medication</div><input type="text" id="manRxMed" placeholder="e.g. Metformin 1000mg" value="${rx?rx.medication_name:''}"></div><div><div class="form-label">Dosage</div><input type="text" id="manRxDose" value="${rx?rx.dosage:''}"></div></div><input type="text" id="manRxInstr" placeholder="Instructions..." value="${rx?.instructions||''}" style="margin-bottom:8px"><button class="btn btn-primary" onclick="issuePrescription(${p.id})" style="margin-bottom:.75rem;width:100%">${rxLabel}</button><hr class="sep"><div class="form-label" style="margin-bottom:8px;color:#0F6E56">Send Message to Patient</div><textarea id="notifMsg" rows="2" placeholder="Type message..." style="margin-bottom:8px"></textarea><button class="btn btn-blue" onclick="sendNotification(${p.id})">${msgLabel}</button><hr class="sep"><div class="form-label" style="margin-bottom:8px;color:#0F6E56">AI Trend Check</div><button class="btn" onclick="runTrendCheck(${p.id})" style="width:100%">${state.loading['trend_'+p.id]?'<span class="spinner"></span>Checking...':'🤖 Run AI trend check'}</button>${state['trendResult_'+p.id]?`<div class="ai-block" style="margin-top:8px">${state['trendResult_'+p.id]}</div>`:''}`;
 }
 </script>
+<!-- ===================== Google Translate (auto page translation) ===================== -->
+<style>
+  /* Hide Google's default banner + branding, keep just the dropdown */
+  .goog-te-banner-frame{display:none!important}
+  body{top:0!important}
+  #google_translate_element .goog-te-gadget{font-size:0}
+  #google_translate_element .goog-te-gadget-simple{
+    border:0.5px solid rgba(0,0,0,0.12);border-radius:8px;padding:5px 8px;
+    background:#fff;cursor:pointer;font-family:inherit;
+  }
+  #google_translate_element .goog-te-gadget-simple span{font-size:13px}
+</style>
+<div id="google_translate_element" style="display:none"></div>
+<script>
+  function googleTranslateElementInit() {
+    new google.translate.TranslateElement(
+      { pageLanguage: 'en', includedLanguages: 'hi,en', autoDisplay: false,
+        layout: google.translate.TranslateElement.InlineLayout.SIMPLE },
+      'google_translate_element'
+    );
+  }
+
+  // Re-run translation whenever the app injects new content via innerHTML
+  // (login screen, dashboards, chat messages, sidebar, etc). Google's widget
+  // only scans the DOM once on load by default, so without this, anything
+  // rendered after that (which is almost everything in this app) stays English.
+  (function () {
+    let debounceTimer = null;
+    const triggerRetranslate = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const combo = document.querySelector('.goog-te-combo');
+        if (combo && combo.value && combo.value !== 'en') {
+          // Re-fire the language change so Google rescans the current DOM
+          combo.dispatchEvent(new Event('change'));
+        }
+      }, 400); // wait for rendering to settle before re-scanning
+    };
+
+    const observer = new MutationObserver(triggerRetranslate);
+    observer.observe(document.getElementById('app'), { childList: true, subtree: true });
+  })();
+</script>
+<script src="//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"></script>
 </body>
 </html>
