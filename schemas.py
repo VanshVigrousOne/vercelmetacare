@@ -125,13 +125,76 @@ class PatientCreate(BaseModel):
     @field_validator("height_cm")
     @classmethod
     def height_must_be_realistic(cls, v):
-        if v is not None and v > 200:
+        if v is None:
+            return v
+        # Common data-entry mistake: height entered in meters (e.g. 1.65) instead
+        # of centimeters. Auto-convert anything that looks like meters before
+        # validating range, so it doesn't silently produce a nonsense BMI later.
+        if v < 3.0:
+            v = v * 100
+        if v > 200:
             raise ValueError("Height looks too high — please check and re-enter (must be 200 cm or less).")
+        if v < 50:
+            raise ValueError("Height looks too low — please check and re-enter (must be at least 50 cm).")
         return v
 
     @field_validator("phone")
     @classmethod
     def phone_must_be_valid(cls, v):
+        digits = "".join(ch for ch in v if ch.isdigit())
+        if len(digits) != 10 and not (len(digits) == 12 and digits.startswith("91")):
+            raise ValueError("Phone number must contain exactly 10 digits.")
+        return v
+
+
+class PatientUpdate(BaseModel):
+    """Partial update for an existing patient's chart info. All fields optional —
+    only fields actually supplied are changed. Used by CHW/Doctor to correct
+    mistakes (e.g. a wrongly-entered height/weight) or update contact details."""
+    name: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    phone: Optional[str] = None
+    village: Optional[str] = None
+    condition: Optional[str] = None
+    hba1c: Optional[float] = None
+    weight: Optional[float] = None
+    height_cm: Optional[float] = None
+    title: Optional[str] = None
+    dob: Optional[datetime] = None
+    existing_id: Optional[str] = None
+    blood_group: Optional[str] = None
+    preferred_language: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    area_pin: Optional[str] = None
+    referred_by_name: Optional[str] = None
+    referred_by_specialization: Optional[str] = None
+    channel: Optional[str] = None
+    care_of: Optional[str] = None
+    occupation: Optional[str] = None
+    phone2: Optional[str] = None
+    tag: Optional[str] = None
+
+    @field_validator("height_cm")
+    @classmethod
+    def height_must_be_realistic(cls, v):
+        if v is None:
+            return v
+        if v < 3.0:
+            v = v * 100
+        if v > 200:
+            raise ValueError("Height looks too high — please check and re-enter (must be 200 cm or less).")
+        if v < 50:
+            raise ValueError("Height looks too low — please check and re-enter (must be at least 50 cm).")
+        return v
+
+    @field_validator("phone")
+    @classmethod
+    def phone_must_be_valid(cls, v):
+        if v is None:
+            return v
         digits = "".join(ch for ch in v if ch.isdigit())
         if len(digits) != 10 and not (len(digits) == 12 and digits.startswith("91")):
             raise ValueError("Phone number must contain exactly 10 digits.")
@@ -391,6 +454,7 @@ class VisitEscalateRequest(BaseModel):
     visit_type: str = "Impromptu"       # Impromptu | Emergency
     preferred_date: Optional[datetime] = None   # CHW's proposed slot — checked against the doctor's calendar
     duration_minutes: int = 30
+    meeting_id: Optional[str] = None    # optional Google Meet code proposed upfront (Teleconsultation)
 
 
 class VisitDeclineRequest(BaseModel):
