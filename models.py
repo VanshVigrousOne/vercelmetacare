@@ -3,7 +3,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from database import Base
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class Doctor(Base):
@@ -15,7 +15,7 @@ class Doctor(Base):
     hospital = Column(String)
     phone = Column(String)
     hashed_password = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patients = relationship("Patient", back_populates="doctor")
     chws = relationship("CHW", back_populates="doctor")
@@ -32,7 +32,7 @@ class CHW(Base):
     phone = Column(String)
     doctor_id = Column(Integer, ForeignKey("doctors.id"))
     hashed_password = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     doctor = relationship("Doctor", back_populates="chws")
     patients = relationship("Patient", back_populates="chw")
@@ -51,7 +51,7 @@ class Dietician(Base):
     phone = Column(String)
     doctor_id = Column(Integer, ForeignKey("doctors.id"))
     hashed_password = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     doctor = relationship("Doctor", back_populates="dieticians")
     patients = relationship("Patient", back_populates="dietician")
@@ -74,7 +74,7 @@ class Patient(Base):
     doctor_id = Column(Integer, ForeignKey("doctors.id"))
     dietician_id = Column(Integer, ForeignKey("dieticians.id"), nullable=True)
     hashed_password = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # ── Terms & Conditions consent (given by the patient) ──────────────────
     consent_given = Column(Boolean, default=False)
@@ -138,7 +138,7 @@ class DailyLog(Base):
     weight = Column(Float)
     raw_text = Column(Text)
     logged_by = Column(String, default="Patient")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="logs")
 
@@ -153,7 +153,7 @@ class Prescription(Base):
     instructions = Column(Text)
     suggested_by = Column(String, default="Doctor")
     active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="prescriptions")
 
@@ -179,7 +179,7 @@ class CHWTask(Base):
     diet_plan_chw_note = Column(Text)
     # Simple non-AI sugar threshold check (<70 or >250 mg/dL)
     critical_sugar_alert = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="tasks")
     chw = relationship("CHW", back_populates="tasks")
@@ -199,7 +199,7 @@ class DoctorAlert(Base):
     visit_request_status = Column(String)               # Requested | Accepted | Declined
     visit_requested_by = Column(String)                 # CHW name
     chw_acknowledged = Column(Boolean, default=False)    # CHW has seen & cleared the doctor's response (Accepted/Declined) from their queue
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="alerts")
     doctor = relationship("Doctor", back_populates="alerts")
@@ -215,7 +215,7 @@ class Notification(Base):
     message = Column(Text)
     notif_type = Column(String, default="message")   # message | visit | diet | test | visit_accepted
     is_read = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="notifications")
 
@@ -228,7 +228,7 @@ class PatientEvent(Base):
     event_type = Column(String)     # DAILY_LOG | PATIENT_REPORT | ESCALATION | VISIT | DIET | TEST
     payload = Column(JSON)
     source = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="events")
 
@@ -270,7 +270,7 @@ class ClinicVisit(Base):
     # code (e.g. "abc-defg-hij") — the full join link is derived from it, and
     # that's what the patient sees.
     meeting_id = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="clinic_visits")
 
@@ -291,7 +291,7 @@ class DoctorSettings(Base):
     lunch_end = Column(String, default="14:00")
     slot_minutes = Column(Integer, default=30)
     working_days = Column(JSON, default=[0, 1, 2, 3, 4, 5])  # Mon=0 ... Sun=6
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class DoctorBreak(Base):
@@ -304,7 +304,7 @@ class DoctorBreak(Base):
     start_time = Column(String)  # "HH:MM"
     end_time = Column(String)    # "HH:MM"
     reason = Column(String, default="Blocked")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class ChwSettings(Base):
@@ -321,7 +321,7 @@ class ChwSettings(Base):
     lunch_end = Column(String, default="14:00")
     slot_minutes = Column(Integer, default=30)
     working_days = Column(JSON, default=[0, 1, 2, 3, 4, 5])  # Mon=0 ... Sun=6
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class ChwBreak(Base):
@@ -334,7 +334,7 @@ class ChwBreak(Base):
     start_time = Column(String)
     end_time = Column(String)
     reason = Column(String, default="Blocked")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class DietPlan(Base):
@@ -373,7 +373,7 @@ class DietPlan(Base):
     chw_validated = Column(Boolean, default=False)
     chw_validated_note = Column(Text)
     chw_validated_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="diet_plans")
 
@@ -395,7 +395,7 @@ class LabTest(Base):
     result_notes = Column(Text)
     is_abnormal = Column(Boolean, default=False)
     clinic_visit_id = Column(Integer, ForeignKey("clinic_visits.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="lab_tests")
 
@@ -422,7 +422,7 @@ class PatientDocument(Base):
     uploaded_by_id = Column(Integer)
     uploaded_by_name = Column(String)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="documents")
 
@@ -437,7 +437,7 @@ class FoodLog(Base):
     calories = Column(Float)
     protein = Column(Float)
     logged_by = Column(String, default="Patient")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="food_logs")
 
@@ -452,6 +452,6 @@ class ExerciseLog(Base):
     completed = Column(Boolean, default=True)
     notes = Column(Text)
     logged_by = Column(String, default="Patient")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     patient = relationship("Patient", back_populates="exercise_logs")
