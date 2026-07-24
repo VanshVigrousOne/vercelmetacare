@@ -205,7 +205,7 @@ let currentUser = null;
 let state = {
   role: 'Patient', patientId: null, selectedTask: null, selectedAlert: null,
   selectedPatient: null, addingPatient: false, addingCHW: false, loading: {}, flash: null,
-  patientTab: 'overview', providerPatientTab: 'overview', patientSearch: '',
+  patientTab: 'overview', providerPatientTab: 'overview', patientSearch: '', editingPatient: null,
   dietPlans: {}, visits: {}, testResults: {}, visitRequests: {}, foodLogs: {}, exerciseLogs: {}, documents: {},
   // Calendar / scheduling
   viewMode: null,                 // null | 'calendar'
@@ -1956,6 +1956,13 @@ function renderPatientView(el) {
 }
 
 function renderPatientDetailsCard(p) {
+  const sess = getSession();
+  const canEdit = sess.role === 'chw' || sess.role === 'doctor';
+
+  if (canEdit && state.editingPatient === p.id) {
+    return renderPatientEditForm(p);
+  }
+
   const rows = [
     ['Full name', [p.title, p.name].filter(Boolean).join(' ')],
     ['Date of birth', p.dob ? fmtDate(p.dob) : null],
@@ -1977,10 +1984,69 @@ function renderPatientDetailsCard(p) {
     ['Channel', p.channel],
     ['Tag', p.tag],
   ].filter(([,v]) => v);
-  if (rows.length === 0) return '';
-  return `<div class="card"><div class="card-title">🧾 Patient Details</div><div class="grid2" style="row-gap:8px">
+  if (rows.length === 0 && !canEdit) return '';
+  return `<div class="card"><div class="flex-between" style="margin-bottom:8px"><div class="card-title" style="margin-bottom:0">🧾 Patient Details</div>${canEdit?`<button class="btn btn-small" onclick="state.editingPatient=${p.id};renderContent()">✏️ Edit</button>`:''}</div><div class="grid2" style="row-gap:8px">
     ${rows.map(([label,val]) => `<div><div class="form-label" style="margin-bottom:2px">${label}</div><div style="font-size:13px">${val}</div></div>`).join('')}
   </div></div>`;
+}
+
+function renderPatientEditForm(p) {
+  const f = (id, label, val, type='text') => `<div><div class="form-label" style="margin-bottom:2px">${label}</div><input type="${type}" id="edit_${id}" value="${val!=null?String(val).replace(/"/g,'&quot;'):''}"></div>`;
+  return `<div class="card"><div class="card-title" style="margin-bottom:8px">🧾 Edit Patient Details</div>
+    <div class="grid2" style="row-gap:8px;margin-bottom:12px">
+      ${f('name','Full name',p.name)}
+      ${f('phone','Phone',p.phone)}
+      ${f('phone2','Alternate phone',p.phone2)}
+      ${f('email','Email',p.email)}
+      ${f('age','Age',p.age,'number')}
+      ${f('gender','Gender',p.gender)}
+      ${f('blood_group','Blood group',p.blood_group)}
+      ${f('weight','Weight (kg)',p.weight,'number')}
+      ${f('height_cm','Height (cm)',p.height_cm,'number')}
+      ${f('hba1c','HbA1c (%)',p.hba1c,'number')}
+      ${f('condition','Condition',p.condition)}
+      ${f('village','Village',p.village)}
+      ${f('city','City',p.city)}
+      ${f('address','Address',p.address)}
+      ${f('area_pin','Area PIN',p.area_pin)}
+      ${f('occupation','Occupation',p.occupation)}
+      ${f('care_of','C/O',p.care_of)}
+      ${f('preferred_language','Preferred language',p.preferred_language)}
+      ${f('tag','Tag',p.tag)}
+    </div>
+    ${state['editPatientError_'+p.id]?`<div class="alert-banner" style="margin-bottom:12px"><span>⚠️</span><span>${state['editPatientError_'+p.id]}</span></div>`:''}
+    <div class="flex" style="gap:8px">
+      <button class="btn btn-primary" style="flex:1" ${state.loading['editPatient_'+p.id]?'disabled':''} onclick="savePatientEdit(${p.id})">${state.loading['editPatient_'+p.id]?'<span class="spinner"></span>Saving...':'💾 Save changes'}</button>
+      <button class="btn" onclick="state.editingPatient=null;state['editPatientError_'+${p.id}]=null;renderContent()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+async function savePatientEdit(patientId) {
+  const ids = ['name','phone','phone2','email','age','gender','blood_group','weight','height_cm','hba1c',
+               'condition','village','city','address','area_pin','occupation','care_of','preferred_language','tag'];
+  const numeric = new Set(['age','weight','height_cm','hba1c']);
+  const payload = {};
+  for (const id of ids) {
+    const el = document.getElementById('edit_' + id);
+    if (!el) continue;
+    const raw = el.value.trim();
+    if (raw === '') continue; // untouched/blank fields are left as-is (PATCH only changes what's sent)
+    payload[id] = numeric.has(id) ? Number(raw) : raw;
+  }
+  state.loading['editPatient_' + patientId] = true;
+  state['editPatientError_' + patientId] = null;
+  renderContent();
+  try {
+    const updated = await api(`/patients/${patientId}`, 'PATCH', payload);
+    db.patients = db.patients.map(p => p.id === patientId ? updated : p);
+    state.editingPatient = null;
+  } catch (e) {
+    state['editPatientError_' + patientId] = e.message || 'Could not save changes.';
+  } finally {
+    state.loading['editPatient_' + patientId] = false;
+    renderTabs(); renderSidebar(); renderContent();
+  }
 }
 
 function renderPatientOverviewTab(patient, logs, rx, unread) {
