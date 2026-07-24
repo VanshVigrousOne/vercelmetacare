@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Union
 import models, schemas, auth, ai_service, diet_reference
 from database import engine, Base, get_db
@@ -577,6 +577,46 @@ def get_patient(
     return patient
 
 
+@app.patch("/patients/{patient_id}", response_model=schemas.PatientOut, tags=["Patient"])
+def update_patient(
+    patient_id: int,
+    payload: schemas.PatientUpdate,
+    db: Session = Depends(get_db),
+    current=Depends(auth.get_current_user),
+):
+    """CHW or Doctor can edit a patient's chart info (e.g. fix a wrongly-entered
+    height/weight, update contact details). Only fields provided are changed."""
+    role, user = current
+    if role not in ("chw", "doctor"):
+        raise HTTPException(status_code=403, detail="Only CHW or Doctor can edit patient info")
+
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    # Scoping checks to prevent BOLA/IDOR — same as read access
+    if role == "chw" and patient.chw_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "doctor" and patient.doctor_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    update_data = payload.model_dump(exclude_unset=True)
+
+    if "phone" in update_data and update_data["phone"] != patient.phone:
+        existing = db.query(models.Patient).filter(
+            models.Patient.phone == update_data["phone"],
+            models.Patient.id != patient_id,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Phone already registered to another patient")
+
+    for key, value in update_data.items():
+        setattr(patient, key, value)
+
+    db.commit()
+    db.refresh(patient)
+    return patient
+
 
 # CONSENT  (Terms & Conditions)
 
@@ -595,7 +635,7 @@ def accept_consent(
     if not payload.agree:
         raise HTTPException(status_code=400, detail="You must agree to the Terms & Conditions to continue")
     patient.consent_given = True
-    patient.consent_given_at = datetime.utcnow()
+    patient.consent_given_at = datetime.now(timezone.utc)
     patient.consent_version = payload.version
     db.commit()
     db.refresh(patient)
@@ -876,9 +916,11 @@ def validate_task(
         raise HTTPException(status_code=404, detail="Task not found")
 
     patient = db.query(models.Patient).filter(models.Patient.id == task.patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
     if role == "chw" and task.chw_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
-    if role == "doctor" and (patient is None or patient.doctor_id != user.id):
+    if role == "doctor" and patient.doctor_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
     recent = (
         db.query(models.DailyLog)
@@ -955,9 +997,11 @@ def escalate_task(
         raise HTTPException(status_code=404, detail="Task not found")
 
     patient = db.query(models.Patient).filter(models.Patient.id == task.patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
     if role == "chw" and task.chw_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
-    if role == "doctor" and (patient is None or patient.doctor_id != user.id):
+    if role == "doctor" and patient.doctor_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
     task.status = "Escalated"
 
@@ -1166,7 +1210,7 @@ def request_visit(
         provider_role="doctor",
         provider_id=patient.doctor_id,
         visit_type=payload.visit_type,
-        visit_date=proposed_date or (datetime.utcnow() + __import__("datetime").timedelta(days=1)),  # provisional
+        visit_date=proposed_date or (datetime.now(timezone.utc) + __import__("datetime").timedelta(days=1)),  # provisional
         # Stays "Requested" — NOT a confirmed booking — until the doctor actually
         # accepts via /alerts/{id}/accept-visit. Only then does it flip to
         # "Scheduled" and show up in anyone's "Upcoming" list. This is what makes
@@ -1176,6 +1220,7 @@ def request_visit(
         reason=payload.reason,
         duration_minutes=payload.duration_minutes,
         doctor_accepted=False,
+        meeting_id=payload.meeting_id,
     )
     db.add(visit)
 
@@ -1764,7 +1809,7 @@ def update_my_doctor_settings(
     db: Session = Depends(get_db),
 ):
     settings = get_or_create_provider_settings(db, "doctor", doctor.id)
-    for key, value in payload.dict(exclude_unset=True).items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(settings, key, value)
     db.commit()
     db.refresh(settings)
@@ -1779,7 +1824,7 @@ def create_doctor_break(
     doctor: models.Doctor = Depends(auth.require_doctor),
     db: Session = Depends(get_db),
 ):
-    brk = models.DoctorBreak(doctor_id=doctor.id, **payload.dict())
+    brk = models.DoctorBreak(doctor_id=doctor.id, **payload.model_dump())
     db.add(brk)
     db.commit()
     db.refresh(brk)
@@ -1832,7 +1877,7 @@ def update_my_chw_settings(
     if role != "chw":
         raise HTTPException(status_code=403, detail="CHW only")
     settings = get_or_create_provider_settings(db, "chw", user.id)
-    for key, value in payload.dict(exclude_unset=True).items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(settings, key, value)
     db.commit()
     db.refresh(settings)
@@ -1850,7 +1895,7 @@ def create_chw_break(
     role, user = current
     if role != "chw":
         raise HTTPException(status_code=403, detail="CHW only")
-    brk = models.ChwBreak(chw_id=user.id, **payload.dict())
+    brk = models.ChwBreak(chw_id=user.id, **payload.model_dump())
     db.add(brk)
     db.commit()
     db.refresh(brk)
@@ -2011,7 +2056,7 @@ def schedule_follow_up(
     provider_role = "doctor" if role == "doctor" else "chw"
     provider_id = user.id
 
-    base_date = (source.visit_date or datetime.utcnow()) + timedelta(days=payload.offset_days)
+    base_date = (source.visit_date or datetime.now(timezone.utc)) + timedelta(days=payload.offset_days)
     if payload.visit_time:
         hh, mm = payload.visit_time.split(":")
         base_date = base_date.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
@@ -2084,7 +2129,7 @@ def update_visit(
     if role == "doctor" and (not patient or patient.doctor_id != user.id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    update_data = payload.dict(exclude_unset=True)
+    update_data = payload.model_dump(exclude_unset=True)
 
     # --- SCHEDULING VALIDATION FOR RESCHEDULING ---
     new_date = update_data.get("visit_date", visit.visit_date)
@@ -2231,7 +2276,7 @@ def create_diet_plan(
         raise HTTPException(status_code=403, detail="Forbidden")
     db.query(models.DietPlan).filter(models.DietPlan.patient_id == payload.patient_id).update({"active": False})
     plan = models.DietPlan(
-        **payload.dict(),
+        **payload.model_dump(),
         created_by=role.upper(),
         created_by_name=user.name,
     )
@@ -2288,7 +2333,7 @@ def update_diet_plan(
         raise HTTPException(status_code=403, detail="Forbidden")
     if role == "dietician" and (not patient or patient.dietician_id != user.id):
         raise HTTPException(status_code=403, detail="Forbidden")
-    for key, value in payload.dict(exclude_unset=True).items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(plan, key, value)
     db.commit()
     db.refresh(plan)
@@ -2320,7 +2365,7 @@ def update_exercise_plan(
     patient.exercise_plan = payload.exercise_plan
     patient.exercise_updated_by = role.upper()
     patient.exercise_updated_by_name = user.name
-    patient.exercise_updated_at = datetime.utcnow()
+    patient.exercise_updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(patient)
     return patient
@@ -2337,18 +2382,17 @@ def add_food_log(
     current=Depends(auth.get_current_user),
 ):
     role, user = current
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
     if role == "patient" and user.id != patient_id:
         raise HTTPException(status_code=403, detail="Forbidden")
-    if role in ("chw", "doctor", "dietician"):
-        patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
-        if not patient:
-            raise HTTPException(status_code=404, detail="Patient not found")
-        if role == "chw" and patient.chw_id != user.id:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if role == "doctor" and patient.doctor_id != user.id:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if role == "dietician" and patient.dietician_id != user.id:
-            raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "chw" and patient.chw_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "doctor" and patient.doctor_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "dietician" and patient.dietician_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
     log = models.FoodLog(
         patient_id=patient_id,
         food_name=payload.food_name,
@@ -2401,18 +2445,17 @@ def add_exercise_log(
     current=Depends(auth.get_current_user),
 ):
     role, user = current
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
     if role == "patient" and user.id != patient_id:
         raise HTTPException(status_code=403, detail="Forbidden")
-    if role in ("chw", "doctor", "dietician"):
-        patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
-        if not patient:
-            raise HTTPException(status_code=404, detail="Patient not found")
-        if role == "chw" and patient.chw_id != user.id:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if role == "doctor" and patient.doctor_id != user.id:
-            raise HTTPException(status_code=403, detail="Forbidden")
-        if role == "dietician" and patient.dietician_id != user.id:
-            raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "chw" and patient.chw_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "doctor" and patient.doctor_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if role == "dietician" and patient.dietician_id != user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
     log = models.ExerciseLog(
         patient_id=patient_id,
         completed=payload.completed,
@@ -2474,7 +2517,7 @@ def order_lab_test(
     if role == "doctor" and patient.doctor_id != user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
     test = models.LabTest(
-        **payload.dict(),
+        **payload.model_dump(),
         ordered_by=role.upper(),
         ordered_by_name=user.name,
     )
@@ -2523,7 +2566,7 @@ def update_lab_test(
         raise HTTPException(status_code=403, detail="Forbidden")
     if role == "doctor" and (not patient or patient.doctor_id != user.id):
         raise HTTPException(status_code=403, detail="Forbidden")
-    for key, value in payload.dict(exclude_unset=True).items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(test, key, value)
     db.commit()
     db.refresh(test)
